@@ -1,3 +1,6 @@
+// Handles all line renderer generation
+
+
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -22,8 +25,9 @@ public class BrushRenderer : MonoBehaviour
 
     [Header("Material Settings")]
     [SerializeField] Material lineMaterial;
-    //[SerializeField] float glowStrength = 1f;
-    //[SerializeField] float glowSize = 1f;
+    [SerializeField] float ditherValueMax = 1.5f;
+    [SerializeField] float ditherValueMin = 1.2f;
+    [SerializeField] float ditherUpdate = 0.1f;
 
     private Vector3 prevEnd;
     private Vector3 prevBranchEnd;
@@ -50,7 +54,7 @@ public class BrushRenderer : MonoBehaviour
 
     private float widthDistance;
 
-    //private Transform frozenLineHolder;
+    private float ditherValue = 1.1f;
 
 
     private void Start()
@@ -63,7 +67,7 @@ public class BrushRenderer : MonoBehaviour
 
         widthDistance = pReferencer.GetWidthRange() * widthGap;
 
-        //lineMaterial.SetFloat("_GlowStrength", glowStrength);
+        
         //lineMaterial.SetFloat("_GlowSize", glowSize);
 
         isBranching = false;
@@ -236,7 +240,29 @@ public class BrushRenderer : MonoBehaviour
 
     public void SetColor(LineRenderer seg)
     {
-        seg.material = lineMaterial;
+        Material newMaterial = new Material(lineMaterial);
+
+        if (Keyboard.current.kKey.isPressed)
+        {
+            ditherValue += ditherUpdate;
+
+            if (ditherValue > ditherValueMax)
+            {
+                ditherValue = ditherValueMax;
+            }
+        }
+        else if (Keyboard.current.lKey.isPressed)
+        {
+            ditherValue -= ditherUpdate;
+
+            if (ditherValue < ditherValueMin)
+            {
+                ditherValue = ditherValueMin;
+            }
+        }
+
+        newMaterial.SetFloat("_DitherValue", ditherValue);
+        seg.material = newMaterial;
         if (segments.Count > 0)
         {
             seg.startColor = segments[segments.Count - 1].endColor;
@@ -380,129 +406,6 @@ public class BrushRenderer : MonoBehaviour
 
         seg.endWidth = pReferencer.GetBranchWidth();
     }
-    
-    
-    
-    
-    
-    // Mode Switch Logic
-    
-    /*
-    public void StopRendering()
-    {
-        isRendering = false;
-        FreezeRenderedLines();
-        HideOriginalLines();
-        enabled = false;
-    }
-
-    public bool TryGetFrozenTraceBounds(out Bounds bounds)
-    {
-        return TryGetSavedLineBounds(segmentPositions, out bounds);
-    }
-
-    private bool TryGetSavedLineBounds(List<Vector3[]> savedPositions, out Bounds bounds)
-    {
-        bool hasPoint = false;
-        bounds = new Bounds();
-
-        foreach (Vector3[] positions in savedPositions)
-        {
-            foreach (Vector3 position in positions)
-            {
-                if (!hasPoint)
-                {
-                    bounds = new Bounds(position, Vector3.zero);
-                    hasPoint = true;
-                }
-                else
-                {
-                    bounds.Encapsulate(position);
-                }
-            }
-        }
-
-        return hasPoint;
-    }
-
-    private void FreezeRenderedLines()
-    {
-        if (frozenLineHolder == null)
-        {
-            frozenLineHolder = new GameObject("FrozenRenderedLines").transform;
-        }
-
-        FreezeLineList(segments, segmentPositions);
-        FreezeLineList(branchSegments, branchSegmentPositions);
-        FreezeLineList(subBranchSegments, subBranchSegmentPositions);
-    }
-
-    private void FreezeLineList(List<LineRenderer> lineRenderers, List<Vector3[]> savedPositions)
-    {
-        for (int i = 0; i < lineRenderers.Count; i++)
-        {
-            LineRenderer lineRenderer = lineRenderers[i];
-            if (lineRenderer == null)
-            {
-                continue;
-            }
-
-            Vector3[] positions = i < savedPositions.Count
-                ? savedPositions[i]
-                : GetLinePositions(lineRenderer);
-
-            LineRenderer frozenLine = new GameObject("FrozenLineSegment").AddComponent<LineRenderer>();
-            frozenLine.transform.SetParent(frozenLineHolder, false);
-            frozenLine.useWorldSpace = true;
-            frozenLine.positionCount = positions.Length;
-            frozenLine.SetPositions(positions);
-
-            frozenLine.startWidth = lineRenderer.startWidth;
-            frozenLine.endWidth = lineRenderer.endWidth;
-            frozenLine.startColor = lineRenderer.startColor;
-            frozenLine.endColor = lineRenderer.endColor;
-            frozenLine.material = lineRenderer.material;
-            frozenLine.numCornerVertices = lineRenderer.numCornerVertices;
-            frozenLine.numCapVertices = lineRenderer.numCapVertices;
-            frozenLine.shadowCastingMode = lineRenderer.shadowCastingMode;
-            frozenLine.receiveShadows = lineRenderer.receiveShadows;
-        }
-    }
-
-    private Vector3[] GetLinePositions(LineRenderer lineRenderer)
-    {
-        Vector3[] positions = new Vector3[lineRenderer.positionCount];
-
-        for (int i = 0; i < lineRenderer.positionCount; i++)
-        {
-            Vector3 position = lineRenderer.GetPosition(i);
-            positions[i] = lineRenderer.useWorldSpace
-                ? position
-                : lineRenderer.transform.TransformPoint(position);
-        }
-
-        return positions;
-    }
-
-    private void HideOriginalLines()
-    {
-        SetLineListEnabled(segments, false);
-        SetLineListEnabled(branchSegments, false);
-        SetLineListEnabled(subBranchSegments, false);
-    }
-
-    private void SetLineListEnabled(List<LineRenderer> lineRenderers, bool enabledState)
-    {
-        foreach (LineRenderer lineRenderer in lineRenderers)
-        {
-            if (lineRenderer != null)
-            {
-                lineRenderer.enabled = enabledState;
-            }
-        }
-    }
-*/
-    
 
 
 }

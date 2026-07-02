@@ -1,4 +1,7 @@
-﻿using System.Linq;
+﻿// Calculator for all physical attributes of the line renderers
+
+
+using System.Linq;
 using UnityEngine;
 
 public class PhysicsReferencer : MonoBehaviour

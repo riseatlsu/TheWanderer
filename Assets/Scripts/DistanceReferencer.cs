@@ -1,3 +1,6 @@
+// custom methods for getting vector3 positions and float distances from thos positions
+
+
 using UnityEngine;
 
 public class DistanceReferencer : MonoBehaviour
