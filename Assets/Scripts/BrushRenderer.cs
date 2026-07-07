@@ -78,7 +78,15 @@ public class BrushRenderer : MonoBehaviour
     {
         if (!isRendering)
         {
-            return;
+            if (Keyboard.current.lKey.isPressed)
+            {
+                isRendering = true;
+            }
+            else
+            {
+                return;
+            }
+           
         }
 
         if (!isInitialized)                                 // Delays initialization until first update
@@ -242,16 +250,18 @@ public class BrushRenderer : MonoBehaviour
     {
         Material newMaterial = new Material(lineMaterial);
 
-        if (Keyboard.current.kKey.isPressed)
+        if (Keyboard.current.kKey.isPressed)                        // get more transparent
         {
             ditherValue += ditherUpdate;
 
             if (ditherValue > ditherValueMax)
             {
                 ditherValue = ditherValueMax;
+
+                isRendering = false;
             }
         }
-        else if (Keyboard.current.lKey.isPressed)
+        else if (Keyboard.current.lKey.isPressed)                   // get more opaque
         {
             ditherValue -= ditherUpdate;
 

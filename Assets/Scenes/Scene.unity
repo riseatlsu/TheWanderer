@@ -238,7 +238,7 @@ Transform:
   m_GameObject: {fileID: 330585543}
   serializedVersion: 2
   m_LocalRotation: {x: 0.15174009, y: -0.7222371, z: 0.14329998, w: 0.659404}
-  m_LocalPosition: {x: 1852, y: 741, z: -93}
+  m_LocalPosition: {x: 2631, y: 1090, z: -16}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1285,9 +1285,9 @@ MonoBehaviour:
   dReference: {fileID: 1000221517}
   widthMin: 15
   widthMax: 25
-  low: {r: 0, g: 0, b: 0, a: 1}
-  medium: {r: 0.12578613, g: 0.12578613, b: 0.12578613, a: 1}
-  high: {r: 0.18867922, g: 0.18867922, b: 0.18867922, a: 1}
+  low: {r: 1, g: 0, b: 0, a: 1}
+  medium: {r: 1, g: 0, b: 0, a: 1}
+  high: {r: 1, g: 0, b: 0, a: 1}
   curveStrength: 0.001
   branchWidthDivider: 1.5
   branchScaler: 30
