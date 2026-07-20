@@ -4,16 +4,18 @@
 
 using UnityEngine;
 using UnityEngine.InputSystem;
+using static UnityEditor.Rendering.CameraUI;
 
 public class PlayerMovement : MonoBehaviour
 {
     [Header("Player Settings")]
     [SerializeField] private Transform player;
-    [SerializeField] private float hSpeed = 10f;
-    [SerializeField] private float vSpeed = 0.5f;
+    [SerializeField] private float hSpeed = 1000f;
+    [SerializeField] private float vSpeed = 100f;
+    [SerializeField] private float speedUpdate = 1f;
 
     [Header("Smoothing")]
-    [SerializeField] private float smoothTime = 0.08f;
+    [SerializeField] private float smoothTime = 0.75f;
 
     [Header("Reference Data")]
     [SerializeField] private DistanceReferencer dReference;
@@ -23,6 +25,18 @@ public class PlayerMovement : MonoBehaviour
 
     private Vector3 currentVelocity;
     private Vector3 velocityRef;
+
+    private float maxSpeed = 1750f;
+    private float minSpeed = 250f;
+    private float maxSmooth = 1.5f;
+    private float minSmooth = 0.25f;
+
+    private float smoothUpdate;
+
+    private void Start()
+    {
+        smoothUpdate = (maxSmooth - minSmooth) / ((maxSpeed - minSpeed) / speedUpdate);     // proportional update values
+    }
 
     private void OnEnable()
     {
@@ -53,8 +67,35 @@ public class PlayerMovement : MonoBehaviour
 
     void Update()
     {
-        //Debug.Log("Movement Update Running");
+        UpdateSmoothness();
         HandleMovement();
+    }
+
+    // update speed based on n and m inputs, make smoothness dependent on speed
+    public void UpdateSmoothness()
+    {
+        if (Keyboard.current.nKey.isPressed)    
+        {
+            hSpeed += speedUpdate;
+            smoothTime += smoothUpdate;
+
+            if (hSpeed > maxSpeed)
+            {
+                hSpeed = maxSpeed;
+                smoothTime = maxSmooth;
+            }
+        }
+        else if (Keyboard.current.mKey.isPressed)     
+        {
+            hSpeed -= speedUpdate;
+            smoothTime -= smoothUpdate;
+
+            if (hSpeed < minSpeed)
+            {
+                hSpeed = minSpeed;
+                smoothTime = minSmooth;
+            }
+        }
     }
 
     public void HandleMovement()
@@ -88,6 +129,7 @@ public class PlayerMovement : MonoBehaviour
         HandleCollisions();
     }
 
+    
     public void HandleCollisions()
     {
         float distance = dReference.GetDistanceToGround();
@@ -99,4 +141,5 @@ public class PlayerMovement : MonoBehaviour
             player.position = pTransform;
         }
     }
+    
 }

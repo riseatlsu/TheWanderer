@@ -3,6 +3,7 @@
 
 using System.Linq;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 public class PhysicsReferencer : MonoBehaviour
 {
@@ -10,8 +11,9 @@ public class PhysicsReferencer : MonoBehaviour
     [SerializeField] private DistanceReferencer dReference;
 
     [Header("Width Settings")]
-    [SerializeField] private float widthMin = 0.1f;
-    [SerializeField] private float widthMax = 1.0f;
+    [SerializeField] private float widthMin = 15f;
+    [SerializeField] private float widthMax = 25f;
+    [SerializeField] private float widthUpdate = 0.01f;
 
     [Header("Color Settings")]
     [SerializeField] private Color low = Color.blue;
@@ -23,7 +25,7 @@ public class PhysicsReferencer : MonoBehaviour
     [SerializeField] private float branchWidthDivider = 2f;
     [SerializeField] private float branchScaler = 0.15f;
 
-    private float width;
+    private float width = 20f;
     private Color color;
     private Vector3 brushPos;
 
@@ -32,23 +34,26 @@ public class PhysicsReferencer : MonoBehaviour
 
     public float GetWidth()
     {
-        float marker = dReference.GetDistanceToGround();
-        if (marker > 0f && marker < 750f)
+
+        if (Keyboard.current.uKey.isPressed)
         {
-            marker /= 750f;
-            marker = Mathf.Clamp01(marker);
-            marker = 1f - marker;
-            width = Mathf.Lerp(widthMin, widthMax, marker);
-            return width;
+            width += widthUpdate;
+
+            if (width > widthMax)
+            {
+                width = widthMax;
+            }
         }
-        else if (marker >= 750f)
+        else if (Keyboard.current.iKey.isPressed)
         {
-            return widthMin;
+            width -= widthUpdate;
+
+            if (width < widthMin)
+            {
+                width = widthMin;
+            }
         }
-        else
-        {
-            return widthMax;
-        }
+        return width;
     }
 
     public float GetBranchWidth()
