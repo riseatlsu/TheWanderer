@@ -20,8 +20,10 @@ public class BrushRenderer : MonoBehaviour
     [SerializeField] int totalPoints = 6;
 
     [Header("Branch Segment Settings")]
-    [SerializeField] int enterSegments = 8;
-    [SerializeField] int returnSegments = 8;
+    [SerializeField] int enterSegments = 20;
+    [SerializeField] int returnSegments = 20;
+    [SerializeField] float upTime = 3f;
+    [SerializeField] float downTime = 3f;
 
     [Header("Material Settings")]
     [SerializeField] Material lineMaterial;
@@ -56,6 +58,10 @@ public class BrushRenderer : MonoBehaviour
 
     private float ditherValue = 1.1f;
 
+    private float downtime = 0f;
+    private float uptime = 0f;
+    private bool branchSideCalculated = false;
+
 
     private void Start()
     {
@@ -68,7 +74,6 @@ public class BrushRenderer : MonoBehaviour
         widthDistance = pReferencer.GetWidthRange() * widthGap;
 
         
-        //lineMaterial.SetFloat("_GlowSize", glowSize);
 
         isBranching = false;
         isSubBranching = false;
@@ -100,9 +105,8 @@ public class BrushRenderer : MonoBehaviour
 
         SetBranching();
         SetSubBranching();
-        
 
-        if (WidthChanged() || IsDistant() || AngleChanged())
+        if (WidthChanged() || IsDistant())
         {
             MakeSegment();
 
@@ -184,12 +188,33 @@ public class BrushRenderer : MonoBehaviour
         return Mathf.Abs(previousWidth - currentWidth) > widthDistance;
     }
 
-    public bool AngleChanged()
+    public bool AngleChanged(int i)
     {
+        if (Time.time < downtime)
+        {
+            return false;
+        }
 
-        float angleDifference = Vector3.Angle(pastDirection, pReferencer.GetBrushPosition() - pastDirection);
+        uptime = downtime + (upTime * i);
 
-        if (angleDifference > angleChange)
+        if (!branchSideCalculated)
+        {
+            branchSide = GetBranchSide();
+            branchSideCalculated = true;
+        }
+
+        if (Time.time > uptime)
+        {
+            downtime = Time.time + downTime;
+            branchSideCalculated = false;
+            return false;
+        }
+
+        Vector3 currentDirection = pReferencer.GetBrushPosition() - prevEnd;
+
+        float angleDifference = Vector3.Angle(pastDirection, currentDirection);
+
+        if (angleDifference > angleChange / i)
         {
             return true;
         }
@@ -197,6 +222,7 @@ public class BrushRenderer : MonoBehaviour
         {
             return false;
         }
+
     }
 
     public void MakeSegment()
@@ -226,7 +252,7 @@ public class BrushRenderer : MonoBehaviour
             seg.SetPosition(i, positions[i]);
         }
 
-        pastDirection = prevEnd - positions[totalPoints - overlap];
+        pastDirection = positions[totalPoints - overlap] - prevEnd;
         prevEnd = positions[totalPoints - overlap];     // next start position is the end of this segment
         
 
@@ -290,30 +316,35 @@ public class BrushRenderer : MonoBehaviour
 
     public void SetBranching()
     {
-        bool wantsBranching = Keyboard.current.pKey.isPressed && segments.Count > 0 && !isSubBranching;
-
-        
-        if (wantsBranching && !isBranching && branchAmount <= 0)
-        {
-            branchSide = Random.value < 0.5 ? -1f : 1f;
-        }
-        
+        bool wantsBranching = AngleChanged(4) && !isSubBranching && pReferencer.GetPlayerSpeed() >= 1000f;
 
         isBranching = wantsBranching;
     }
 
     public void SetSubBranching()
     {
-        bool wantsSubBranching = Keyboard.current.oKey.isPressed && segments.Count > 0 && !isBranching;
-
-        
-        if (wantsSubBranching && !isSubBranching && branchAmount <= 0 && subBranchAmount <= 0)
-        {
-            branchSide = Random.value < 0.5 ? -1f : 1f;
-        }
-        
+        bool wantsSubBranching = AngleChanged(1) && !isBranching && pReferencer.GetPlayerSpeed() < 1000f;
 
         isSubBranching = wantsSubBranching;
+    }
+
+    public int GetBranchSide()
+    {
+        Vector3 currentDirection =
+            pReferencer.GetBrushPosition() - prevEnd;
+
+        float cross =
+            pastDirection.x * currentDirection.y -
+            pastDirection.y * currentDirection.x;
+
+        if (cross < 0)
+        {
+            return -1;
+        }
+        else
+        {
+            return 1;
+        }
     }
 
 
@@ -345,7 +376,7 @@ public class BrushRenderer : MonoBehaviour
         segment.transform.SetParent(DestroyAfter);
 
         SetBranchPos(segment, branchLevel);
-        SetBranchWidth(segment);
+        SetBranchWidth(segment, branchLevel);
         SetColor(segment);
 
         if (branchLevel == 1)
@@ -403,7 +434,7 @@ public class BrushRenderer : MonoBehaviour
         }
     }
 
-    public void SetBranchWidth(LineRenderer seg)
+    public void SetBranchWidth(LineRenderer seg, int level)
     {
         if (branchSegments.Count == 0)
         {
@@ -411,10 +442,10 @@ public class BrushRenderer : MonoBehaviour
         }
         else
         {
-            seg.startWidth = branchSegments[branchSegments.Count - 1].endWidth;
+            seg.startWidth = branchSegments[branchSegments.Count - 1].endWidth / level;
         }
 
-        seg.endWidth = pReferencer.GetBranchWidth();
+        seg.endWidth = pReferencer.GetBranchWidth() / level;
     }
 
 

@@ -438,11 +438,11 @@ MonoBehaviour:
   DestroyAfter: {fileID: 1945256806}
   segmentDistance: 10
   widthGap: 50
-  angleChange: 180
+  angleChange: 5
   overlap: 1
   totalPoints: 20
-  enterSegments: 40
-  returnSegments: 40
+  enterSegments: 20
+  returnSegments: 20
   lineMaterial: {fileID: 2100000, guid: 6ed38fbecb6e73548baf4cb6b548d2b4, type: 2}
   ditherValueMax: 2
   ditherValueMin: 1.1
@@ -833,9 +833,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: '::'
   player: {fileID: 1677623895}
-  hSpeed: 1000
-  vSpeed: 0.5
-  smoothTime: 0.75
+  hSpeed: 500
+  vSpeed: 100
+  speedUpdate: 10
+  smoothTime: 0.25
   dReference: {fileID: 1000221517}
 --- !u!1 &1000221516
 GameObject:
@@ -999,7 +1000,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 31321ba15b8f8eb4c954353edc038b1d, type: 2}
+  - {fileID: 2100000, guid: e823cd5b5d27c0f4b8256e7c12ee3e6d, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -1283,14 +1284,15 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: '::'
   dReference: {fileID: 1000221517}
-  widthMin: 15
-  widthMax: 25
-  low: {r: 1, g: 0, b: 0, a: 1}
-  medium: {r: 1, g: 0, b: 0, a: 1}
-  high: {r: 1, g: 0, b: 0, a: 1}
+  widthMin: 25
+  widthMax: 50
+  widthUpdate: 0.01
+  low: {r: 0, g: 0, b: 0, a: 1}
+  medium: {r: 0, g: 0, b: 0, a: 1}
+  high: {r: 0, g: 0, b: 0, a: 1}
   curveStrength: 0.001
-  branchWidthDivider: 1.5
-  branchScaler: 30
+  branchWidthDivider: 2.5
+  branchScaler: 20
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

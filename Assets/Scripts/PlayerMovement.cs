@@ -28,7 +28,7 @@ public class PlayerMovement : MonoBehaviour
 
     private float maxSpeed = 1750f;
     private float minSpeed = 250f;
-    private float maxSmooth = 1.5f;
+    private float maxSmooth = 1f;
     private float minSmooth = 0.25f;
 
     private float smoothUpdate;
@@ -141,5 +141,10 @@ public class PlayerMovement : MonoBehaviour
             player.position = pTransform;
         }
     }
-    
+
+    public float GetCurrentSpeed()
+    {
+        return hSpeed;
+    }
+
 }

@@ -9,6 +9,7 @@ public class PhysicsReferencer : MonoBehaviour
 {
     [Header("Reference Data")]
     [SerializeField] private DistanceReferencer dReference;
+    [SerializeField] private PlayerMovement mReference;
 
     [Header("Width Settings")]
     [SerializeField] private float widthMin = 15f;
@@ -26,6 +27,7 @@ public class PhysicsReferencer : MonoBehaviour
     [SerializeField] private float branchScaler = 0.15f;
 
     private float width = 20f;
+    private float branchWidth = 10f;
     private Color color;
     private Vector3 brushPos;
 
@@ -58,24 +60,8 @@ public class PhysicsReferencer : MonoBehaviour
 
     public float GetBranchWidth()
     {
-        float marker = dReference.GetDistanceToGround();
-        if (marker > 0f && marker < 750f)
-        {
-            marker /= 750f;
-            marker = Mathf.Clamp01(marker);
-            marker = 1f - marker;
-            width = Mathf.Lerp(widthMin, widthMax, marker);
-            width /= branchWidthDivider;
-        }
-        else if (marker >= 750f)
-        {
-            width = widthMin / branchWidthDivider;
-        }
-        else
-        {
-            width = widthMax / branchWidthDivider;
-        }
-        return width;
+        branchWidth = GetWidth() / branchWidthDivider;
+        return branchWidth;
     }
 
     public float GetWidthRange()
@@ -188,5 +174,10 @@ public class PhysicsReferencer : MonoBehaviour
         brushPos.z = dReference.getPlayerPosition().z;
 
         return brushPos;
+    }
+
+    public float GetPlayerSpeed()
+    {
+        return mReference.GetCurrentSpeed();
     }
 }
