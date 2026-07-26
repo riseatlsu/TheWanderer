@@ -72,7 +72,7 @@ public class PhysicsReferencer : MonoBehaviour
 
     public Color GetColor()
     {
-        
+        /*
         float distance = dReference.GetGroundHeight();
         distance = Mathf.InverseLerp(50f, 750f, distance);
 
@@ -86,7 +86,21 @@ public class PhysicsReferencer : MonoBehaviour
             float t = Mathf.InverseLerp(0.5f, 1f, distance);
             color = Color.Lerp(medium, high, t);
         }
-        
+        */
+
+        if (Keyboard.current.digit8Key.isPressed)
+        {
+            color = high;
+        }
+        else if (Keyboard.current.digit9Key.isPressed)
+        {
+            color = medium;
+        }
+        else
+        {
+            color = low;
+        }
+
         return color;
     }
 

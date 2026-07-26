@@ -27,8 +27,8 @@ public class BrushRenderer : MonoBehaviour
 
     [Header("Material Settings")]
     [SerializeField] Material lineMaterial;
-    [SerializeField] float ditherValueMax = 1.5f;
-    [SerializeField] float ditherValueMin = 1.2f;
+    [SerializeField] float ditherValueMax = 2f;
+    [SerializeField] float ditherValueMin = 1.1f;
     [SerializeField] float ditherUpdate = 0.1f;
 
     private Vector3 prevEnd;
@@ -51,16 +51,19 @@ public class BrushRenderer : MonoBehaviour
     private float subBranchAmount = 0f;
 
 
-    private bool isRendering = true;
+    private bool isRendering = false;
     private bool isInitialized;
 
     private float widthDistance;
 
-    private float ditherValue = 1.1f;
+    private float ditherValue = 2f;
 
     private float downtime = 0f;
     private float uptime = 0f;
     private bool branchSideCalculated = false;
+    private bool fadedIn = false;
+    private bool canChangeColor = false;
+    private Color color;
 
 
     private void Start()
@@ -73,7 +76,7 @@ public class BrushRenderer : MonoBehaviour
 
         widthDistance = pReferencer.GetWidthRange() * widthGap;
 
-        
+        color = pReferencer.GetColor();
 
         isBranching = false;
         isSubBranching = false;
@@ -81,17 +84,16 @@ public class BrushRenderer : MonoBehaviour
     }
     void Update()
     {
+        SetRendering();
+
+
         if (!isRendering)
         {
-            if (Keyboard.current.lKey.isPressed)
+            if (isInitialized)
             {
-                isRendering = true;
+                isInitialized = false;
             }
-            else
-            {
-                return;
-            }
-           
+            return;
         }
 
         if (!isInitialized)                                 // Delays initialization until first update
@@ -99,6 +101,7 @@ public class BrushRenderer : MonoBehaviour
             prevEnd = pReferencer.GetBrushPosition();
             prevBranchEnd = prevEnd;
             prevSubBranchEnd = prevEnd;
+            canChangeColor = true;
             isInitialized = true;
             return;
         }
@@ -149,6 +152,33 @@ public class BrushRenderer : MonoBehaviour
         }
     }
 
+    public void SetRendering()      // and also create fade in and fade out effect
+    {
+        if (Keyboard.current.pKey.isPressed)
+        {
+            isRendering = true;
+            if (!fadedIn)
+            {
+                ditherValue -= (ditherUpdate * 2);
+                if (ditherValue < 1.3f)
+                {
+                    fadedIn = true;
+                }
+            }
+        }
+        else if (isRendering)
+        {
+            ditherValue += (ditherUpdate * 2);
+            if (ditherValue > ditherValueMax)
+            {
+                ditherValue = ditherValueMax;
+
+                isRendering = false;
+                fadedIn = false;
+
+            }
+        }
+    }
     
     public bool IsDistant()
     {
@@ -279,16 +309,10 @@ public class BrushRenderer : MonoBehaviour
         if (Keyboard.current.kKey.isPressed)                        // get more transparent
         {
             ditherValue += ditherUpdate;
-
-            if (ditherValue > ditherValueMax)
-            {
-                ditherValue = ditherValueMax;
-
-                isRendering = false;
-            }
         }
         else if (Keyboard.current.lKey.isPressed)                   // get more opaque
         {
+            fadedIn = true;
             ditherValue -= ditherUpdate;
 
             if (ditherValue < ditherValueMin)
@@ -299,6 +323,8 @@ public class BrushRenderer : MonoBehaviour
 
         newMaterial.SetFloat("_DitherValue", ditherValue);
         seg.material = newMaterial;
+
+        /*
         if (segments.Count > 0)
         {
             seg.startColor = segments[segments.Count - 1].endColor;
@@ -309,6 +335,18 @@ public class BrushRenderer : MonoBehaviour
             seg.startColor = pReferencer.GetColor();
             seg.endColor = pReferencer.GetColor();
         }
+        */
+
+        if (canChangeColor)
+        {
+            color = pReferencer.GetColor();
+            canChangeColor = false;
+        }
+
+        seg.startColor = color;
+        seg.endColor = color;
+        
+        
     }
 
 
