@@ -32,7 +32,10 @@ public class PhysicsReferencer : MonoBehaviour
     private Vector3 brushPos;
 
 
-
+    private void Start()
+    {
+        color = medium;
+    }
 
     public float GetWidth()
     {
@@ -92,17 +95,18 @@ public class PhysicsReferencer : MonoBehaviour
         {
             color = high;
         }
-        else if (Keyboard.current.digit9Key.isPressed)
+        if (Keyboard.current.digit9Key.isPressed)
         {
             color = medium;
         }
-        else
+        if (Keyboard.current.digit0Key.isPressed)
         {
             color = low;
         }
 
         return color;
     }
+
 
     public Vector3[] GetPos(Vector3 start, Vector3 end, Vector3[] positions)
     {

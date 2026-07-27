@@ -62,8 +62,11 @@ public class BrushRenderer : MonoBehaviour
     private float uptime = 0f;
     private bool branchSideCalculated = false;
     private bool fadedIn = false;
+
+    
     private bool canChangeColor = false;
     private Color color;
+    private Color colorRequest;
 
 
     private void Start()
@@ -76,7 +79,7 @@ public class BrushRenderer : MonoBehaviour
 
         widthDistance = pReferencer.GetWidthRange() * widthGap;
 
-        color = pReferencer.GetColor();
+        colorRequest = pReferencer.GetColor();
 
         isBranching = false;
         isSubBranching = false;
@@ -85,7 +88,7 @@ public class BrushRenderer : MonoBehaviour
     void Update()
     {
         SetRendering();
-
+        SetColorRequest();
 
         if (!isRendering)
         {
@@ -339,7 +342,7 @@ public class BrushRenderer : MonoBehaviour
 
         if (canChangeColor)
         {
-            color = pReferencer.GetColor();
+            color = colorRequest;
             canChangeColor = false;
         }
 
@@ -364,6 +367,11 @@ public class BrushRenderer : MonoBehaviour
         bool wantsSubBranching = AngleChanged(1) && !isBranching && pReferencer.GetPlayerSpeed() < 1000f;
 
         isSubBranching = wantsSubBranching;
+    }
+
+    public void SetColorRequest()
+    {
+        colorRequest = pReferencer.GetColor();
     }
 
     public int GetBranchSide()
