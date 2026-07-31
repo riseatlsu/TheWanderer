@@ -1499,9 +1499,16 @@ MonoBehaviour:
   widthMin: 25
   widthMax: 50
   widthUpdate: 0.01
-  low: {r: 1, g: 0, b: 0, a: 1}
-  medium: {r: 0.7411765, g: 0, b: 0.73060274, a: 1}
-  high: {r: 0.37254903, g: 0, b: 1, a: 1}
+  one: {r: 1, g: 0.64184284, b: 0.24213827, a: 1}
+  two: {r: 1, g: 0.356365, b: 0.015686274, a: 1}
+  three: {r: 0.9372549, g: 0.16623308, b: 0, a: 1}
+  four: {r: 0.91764706, g: 0.045285266, b: 0, a: 1}
+  five: {r: 0.69803923, g: 0.050335955, b: 0, a: 1}
+  six: {r: 0.54088044, g: 0, b: 0, a: 1}
+  seven: {r: 0.47798735, g: 0, b: 0.21717013, a: 1}
+  eight: {r: 0.69182384, g: 0, b: 0.33400828, a: 1}
+  nine: {r: 0.7987421, g: 0, b: 0.45580378, a: 1}
+  zero: {r: 0.9685534, g: 0, b: 0.58570653, a: 1}
   curveStrength: 0.001
   branchWidthDivider: 1.5
   branchScaler: 20

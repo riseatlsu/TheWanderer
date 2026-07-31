@@ -2,8 +2,11 @@
 
 
 using System.Linq;
+using Unity.VisualScripting;
+using Unity.VisualScripting.Antlr3.Runtime.Tree;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Rendering;
 
 public class PhysicsReferencer : MonoBehaviour
 {
@@ -17,9 +20,16 @@ public class PhysicsReferencer : MonoBehaviour
     [SerializeField] private float widthUpdate = 0.01f;
 
     [Header("Color Settings")]
-    [SerializeField] private Color low = Color.blue;
-    [SerializeField] private Color medium = Color.yellow;
-    [SerializeField] private Color high = Color.red;
+    [SerializeField] private Color one = Color.blue;
+    [SerializeField] private Color two = Color.yellow;
+    [SerializeField] private Color three = Color.red;
+    [SerializeField] private Color four = Color.blue;
+    [SerializeField] private Color five = Color.yellow;
+    [SerializeField] private Color six = Color.red;
+    [SerializeField] private Color seven = Color.blue;
+    [SerializeField] private Color eight = Color.yellow;
+    [SerializeField] private Color nine = Color.red;
+    [SerializeField] private Color zero = Color.blue;
 
     [Header("Movement Settings")]
     [SerializeField] private float curveStrength = 0.25f;
@@ -34,7 +44,7 @@ public class PhysicsReferencer : MonoBehaviour
 
     private void Start()
     {
-        color = medium;
+        color = five;
     }
 
     public float GetWidth()
@@ -75,34 +85,16 @@ public class PhysicsReferencer : MonoBehaviour
 
     public Color GetColor()
     {
-        /*
-        float distance = dReference.GetGroundHeight();
-        distance = Mathf.InverseLerp(50f, 750f, distance);
-
-        if (distance < 0.5f)
-        {
-            float t = Mathf.InverseLerp(0f, 0.5f, distance);
-            color = Color.Lerp(low, medium, t);
-        }
-        else
-        {
-            float t = Mathf.InverseLerp(0.5f, 1f, distance);
-            color = Color.Lerp(medium, high, t);
-        }
-        */
-
-        if (Keyboard.current.digit8Key.isPressed)
-        {
-            color = high;
-        }
-        if (Keyboard.current.digit9Key.isPressed)
-        {
-            color = medium;
-        }
-        if (Keyboard.current.digit0Key.isPressed)
-        {
-            color = low;
-        }
+        if (Keyboard.current.digit1Key.isPressed) color = one;
+        else if (Keyboard.current.digit2Key.isPressed) color = two;
+        else if (Keyboard.current.digit3Key.isPressed) color = three;
+        else if (Keyboard.current.digit4Key.isPressed) color = four;
+        else if (Keyboard.current.digit5Key.isPressed) color = five;
+        else if (Keyboard.current.digit6Key.isPressed) color = six;
+        else if (Keyboard.current.digit7Key.isPressed) color = seven;
+        else if (Keyboard.current.digit8Key.isPressed) color = eight;
+        else if (Keyboard.current.digit9Key.isPressed) color = nine;
+        else if (Keyboard.current.digit0Key.isPressed) color = zero;
 
         return color;
     }
