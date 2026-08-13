@@ -24,11 +24,19 @@ using UnityEngine.AI;
 [RequireComponent(typeof(NavMeshAgent))]
 public class WandererMotor : MonoBehaviour
 {
+    [Header("Milestone 1 Test")]
+
+    [SerializeField]
+    private float testMovementSpeed = 3f;
     [Header("Initialization")]
+
+
+
+
 
     [SerializeField, Min(0.1f)]
     [Tooltip("Maximum distance used to snap Wanderer onto the NavMesh at startup.")]
-    private float startupSnapDistance = 25f;
+    private float startupSnapDistance = 100f;
 
 
     [Header("Movement Envelope")]
@@ -164,6 +172,48 @@ public class WandererMotor : MonoBehaviour
             $"Area Mask: {agent.areaMask}",
             this
         );
+
+        StartTestMovement();
+    }
+
+    private void StartTestMovement()
+    {
+        WandererDecision decision = CreateTestDecision();
+
+        TryMove(decision);
+    }
+    private WandererDecision CreateTestDecision()
+    {
+        return new WandererDecision
+        {
+            direction =
+                ((WandererDirection)UnityEngine.Random.Range(0, 8))
+                    .ToString()
+                    .ToLowerInvariant(),
+
+            distance = 30f,
+
+            speed = testMovementSpeed,
+
+            acceleration = 20f,
+
+            angularSpeed = 180f,
+
+            stoppingDistance = 0f,
+
+            waitSeconds = 0f,
+
+            mood = "curious",
+
+            thought = "I keep moving."
+        };
+    }
+
+    private void StartNextTestMovement()
+    {
+        WandererDecision decision = CreateTestDecision();
+
+        TryMove(decision);
     }
 
     /// <summary>
@@ -190,6 +240,9 @@ public class WandererMotor : MonoBehaviour
         );
 
         ConfigureAgent(decision);
+        Debug.Log(
+    $"Agent speed is actually: {agent.speed}"
+);
 
         if (!TryFindDestination(
                 preferredDirection,
@@ -1125,6 +1178,9 @@ public class WandererMotor : MonoBehaviour
         );
 
         MovementCompleted?.Invoke(result);
+
+        StartNextTestMovement();
+
     }
 
 

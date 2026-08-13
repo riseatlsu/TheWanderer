@@ -10,7 +10,7 @@ public class DistanceReferencer : MonoBehaviour
 
     [Header("Point B")]
     [SerializeField] private GameObject mars;
-    [SerializeField] private LayerMask marsLayer;
+    //[SerializeField] private LayerMask marsLayer;
 
     private float playerHeight;
     private float targetHeight;

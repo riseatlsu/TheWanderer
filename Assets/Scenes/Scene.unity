@@ -179,7 +179,7 @@ Camera:
     height: 0.5
   near clip plane: 0.3
   far clip plane: 10000
-  field of view: 60.000004
+  field of view: 45
   orthographic: 0
   orthographic size: 5
   m_Depth: 0
@@ -205,13 +205,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 330585543}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.092150904, y: -0.8109678, z: 0.1761144, w: 0.55029374}
-  m_LocalPosition: {x: 4444, y: 2235, z: 2012}
+  m_LocalRotation: {x: -0.12278779, y: 0.6963643, z: -0.12278779, w: -0.6963643}
+  m_LocalPosition: {x: 3255, y: 2274, z: 83}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 675841787}
-  m_LocalEulerAnglesHint: {x: 22.772, y: -111.126, z: 2.758}
+  m_LocalEulerAnglesHint: {x: 20, y: 270, z: 0}
 --- !u!114 &330585547
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -302,7 +302,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::BrushRenderer
   dReferencer: {fileID: 1000221517}
   pReferencer: {fileID: 2070912967}
-  DestroyAfter: {fileID: 0}
+  DestroyAfter: {fileID: 1806895344}
   segmentDistance: 10
   widthGap: 50
   angleChange: 5
@@ -653,7 +653,6 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 869197557}
-  - {fileID: 1000221518}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &869197556
@@ -737,10 +736,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: '::'
   player: {fileID: 1677623895}
-  mars: {fileID: 0}
-  marsLayer:
-    serializedVersion: 2
-    m_Bits: 64
+  mars: {fileID: 5620149567589213800}
 --- !u!4 &1000221518
 Transform:
   m_ObjectHideFlags: 0
@@ -754,7 +750,7 @@ Transform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 829548967}
+  m_Father: {fileID: 1562113225}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1137416045
 GameObject:
@@ -936,8 +932,10 @@ Transform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
+  - {fileID: 1000221518}
   - {fileID: 2070912966}
   - {fileID: 381558507}
+  - {fileID: 1806895344}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1590778553
@@ -1139,6 +1137,7 @@ GameObject:
   - component: {fileID: 1677623903}
   - component: {fileID: 1677623902}
   - component: {fileID: 1677623901}
+  - component: {fileID: 1677623905}
   m_Layer: 2
   m_Name: Wanderer
   m_TagString: Untagged
@@ -1155,7 +1154,7 @@ Transform:
   m_GameObject: {fileID: 1677623894}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 100, z: 0}
+  m_LocalPosition: {x: 0, y: 110, z: 0}
   m_LocalScale: {x: 100, y: 100, z: 100}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1258,7 +1257,7 @@ NavMeshAgent:
   m_AutoBraking: 1
   m_AutoRepath: 1
   m_Height: 1
-  m_BaseOffset: 0.5
+  m_BaseOffset: 1
   m_WalkableMask: 4294967295
   m_ObstacleAvoidanceType: 0
 --- !u!114 &1677623901
@@ -1285,27 +1284,28 @@ MonoBehaviour:
   m_GameObject: {fileID: 1677623894}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c93fa96ac59134147b3fdcb8b77541fe, type: 3}
+  m_Script: {fileID: 11500000, guid: 2bc67bccf50d6384a9dec22a08d284fe, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WandererMotor
+  testMovementSpeed: 1000
   startupSnapDistance: 100
-  maximumMovementDistance: 1500
+  maximumMovementDistance: 3000
   absoluteMinimumMovement: 1
   destinationSampleRadius: 200
   minimumPreferredAlignment: 0.2
   directionalDistanceSamples: 10
-  randomSearchAttempts: 8
-  minimumSpeed: 50
-  maximumSpeed: 1000
-  minimumAcceleration: 50
+  randomSearchAttempts: 64
+  minimumSpeed: 1
+  maximumSpeed: 500
+  minimumAcceleration: 1
   maximumAcceleration: 1000
-  minimumAngularSpeed: 50
-  maximumAngularSpeed: 1000
+  minimumAngularSpeed: 30
+  maximumAngularSpeed: 720
   maximumStoppingDistance: 50
-  stallTimeout: 15
+  stallTimeout: 4
   stallPositionEpsilon: 0.1
-  minimumMovementTimeout: 50
-  recoveryRetryDelay: 50
+  minimumMovementTimeout: 20
+  recoveryRetryDelay: 1
   pathAcquisitionGrace: 0.75
   arrivalTolerance: 0.5
   recoveryDestinationSeparation: 5
@@ -1322,7 +1322,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WandererBrain
   model: gpt-5.6-luna
-  apiKeyOverride: 
+  apiKeyOverride: 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
   printRawResponse: 1
   minimumRequestedDistance: 1000
   maximumRequestedDistance: 2500
@@ -1430,8 +1430,73 @@ MonoBehaviour:
   scanDistance: 1000
   minimumProbeDistance: 10
   probeAttempts: 8
-  sampleRadius: 200
+  sampleRadius: 1000
   minimumDirectionAlignment: 0.25
+--- !u!114 &1677623905
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1677623894}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2bc67bccf50d6384a9dec22a08d284fe, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WandererMotor
+  testMovementSpeed: 1000
+  startupSnapDistance: 25
+  maximumMovementDistance: 3000
+  absoluteMinimumMovement: 1
+  destinationSampleRadius: 200
+  minimumPreferredAlignment: 0.2
+  directionalDistanceSamples: 10
+  randomSearchAttempts: 64
+  minimumSpeed: 1
+  maximumSpeed: 500
+  minimumAcceleration: 1
+  maximumAcceleration: 1000
+  minimumAngularSpeed: 30
+  maximumAngularSpeed: 720
+  maximumStoppingDistance: 50
+  stallTimeout: 4
+  stallPositionEpsilon: 0.1
+  minimumMovementTimeout: 20
+  recoveryRetryDelay: 1
+  pathAcquisitionGrace: 0.75
+  arrivalTolerance: 0.5
+  recoveryDestinationSeparation: 5
+--- !u!1 &1806895343
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1806895344}
+  m_Layer: 0
+  m_Name: DestroyAfter
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1806895344
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1806895343}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 1199.5604, y: 1526.87, z: 703.48126}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1562113225}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &2070912965
 GameObject:
   m_ObjectHideFlags: 0
@@ -1579,6 +1644,7 @@ GameObject:
   - component: {fileID: 3078898924814559373}
   - component: {fileID: 5620149567589213801}
   - component: {fileID: 5620149567589213802}
+  - component: {fileID: 5620149567589213803}
   m_Layer: 0
   m_Name: Surface
   m_TagString: Untagged
@@ -1617,7 +1683,7 @@ MonoBehaviour:
   m_VoxelSize: 0.16666667
   m_MinRegionArea: 2
   m_NavMeshData: {fileID: 23800000, guid: b383d052b1c5bc247b0a4ca42a0d6636, type: 2}
-  m_BuildHeightMesh: 0
+  m_BuildHeightMesh: 1
 --- !u!65 &5620149567589213802
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -1639,6 +1705,28 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 6006.907, y: 762.746, z: 10548.633}
   m_Center: {x: -16.147705, y: 382.06207, z: 16.129395}
+--- !u!64 &5620149567589213803
+MeshCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5620149567589213800}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 5
+  m_Convex: 0
+  m_CookingOptions: 30
+  m_Mesh: {fileID: -2432090755550338912, guid: 910eb6e84220b454982f502d85c76004, type: 3}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
