@@ -1254,7 +1254,7 @@ NavMeshAgent:
   m_AngularSpeed: 500
   m_StoppingDistance: 50
   m_AutoTraverseOffMeshLink: 1
-  m_AutoBraking: 0
+  m_AutoBraking: 1
   m_AutoRepath: 1
   m_Height: 1
   m_BaseOffset: 0.5
@@ -1308,7 +1308,6 @@ MonoBehaviour:
   pathAcquisitionGrace: 0.75
   arrivalTolerance: 0.5
   recoveryDestinationSeparation: 5
-  nextDecisionLeadTime: 3
 --- !u!114 &1677623903
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1333,8 +1332,8 @@ MonoBehaviour:
   minimumAngularSpeed: 350
   maximumAngularSpeed: 500
   minimumStoppingDistance: 1
-  maximumStoppingDistance: 2
-  maximumWaitSeconds: 1
+  maximumStoppingDistance: 20
+  maximumWaitSeconds: 30
   personalityPrompt: 'You are Wanderer, a small autonomous sphere experiencing the
     surface of Mars for the first time.
 
@@ -1465,7 +1464,6 @@ MonoBehaviour:
   pathAcquisitionGrace: 0.75
   arrivalTolerance: 0.5
   recoveryDestinationSeparation: 5
-  nextDecisionLeadTime: 3
 --- !u!1 &1806895343
 GameObject:
   m_ObjectHideFlags: 0

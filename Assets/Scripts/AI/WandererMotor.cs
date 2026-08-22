@@ -24,15 +24,7 @@ using UnityEngine.AI;
 [RequireComponent(typeof(NavMeshAgent))]
 public class WandererMotor : MonoBehaviour
 {
-    [Header("Milestone 1 Test")]
-
-    [SerializeField]
-    private float testMovementSpeed = 3f;
     [Header("Initialization")]
-
-
-
-
 
     [SerializeField, Min(0.1f)]
     [Tooltip("Maximum distance used to snap Wanderer onto the NavMesh at startup.")]
@@ -120,8 +112,13 @@ public class WandererMotor : MonoBehaviour
     [Tooltip("Recovery avoids reselecting a destination this close to the destination that just failed.")]
     private float recoveryDestinationSeparation = 5f;
 
+    [SerializeField, Min(0.1f)]
+    [Tooltip("How many seconds before arrival the next LLM decision should be requested.")]
+    private float nextDecisionLeadTime = 3f;
+
 
     public event Action<WandererMovementResult> MovementCompleted;
+    public event Action RequestNextDecision;
 
     public bool IsInitialized { get; private set; }
     public bool IsBusy { get; private set; }
@@ -137,6 +134,7 @@ public class WandererMotor : MonoBehaviour
     private DestinationCandidate activeCandidate;
 
     private float lastDestinationSetTime;
+    private bool nextDecisionRequested;
 
 
     private void Awake()
@@ -172,48 +170,6 @@ public class WandererMotor : MonoBehaviour
             $"Area Mask: {agent.areaMask}",
             this
         );
-
-        StartTestMovement();
-    }
-
-    private void StartTestMovement()
-    {
-        WandererDecision decision = CreateTestDecision();
-
-        TryMove(decision);
-    }
-    private WandererDecision CreateTestDecision()
-    {
-        return new WandererDecision
-        {
-            direction =
-                ((WandererDirection)UnityEngine.Random.Range(0, 8))
-                    .ToString()
-                    .ToLowerInvariant(),
-
-            distance = 30f,
-
-            speed = testMovementSpeed,
-
-            acceleration = 20f,
-
-            angularSpeed = 180f,
-
-            stoppingDistance = 0f,
-
-            waitSeconds = 0f,
-
-            mood = "curious",
-
-            thought = "I keep moving."
-        };
-    }
-
-    private void StartNextTestMovement()
-    {
-        WandererDecision decision = CreateTestDecision();
-
-        TryMove(decision);
     }
 
     /// <summary>
@@ -240,9 +196,6 @@ public class WandererMotor : MonoBehaviour
         );
 
         ConfigureAgent(decision);
-        Debug.Log(
-    $"Agent speed is actually: {agent.speed}"
-);
 
         if (!TryFindDestination(
                 preferredDirection,
@@ -894,6 +847,7 @@ public class WandererMotor : MonoBehaviour
 
         activeDecision = decision;
         activeCandidate = candidate;
+        nextDecisionRequested = false;
 
         IsBusy = true;
 
@@ -966,6 +920,23 @@ public class WandererMotor : MonoBehaviour
             {
                 yield return null;
                 continue;
+            }
+
+            if (!nextDecisionRequested)
+            {
+                float remaining = SafeRemainingDistance();
+
+                float leadDistance =
+                    Mathf.Max(
+                        agent.stoppingDistance + arrivalTolerance,
+                        agent.speed * nextDecisionLeadTime
+                    );
+
+                if (remaining >= 0f && remaining <= leadDistance)
+                {
+                    nextDecisionRequested = true;
+                    RequestNextDecision?.Invoke();
+                }
             }
 
             // Check arrival before checking hasPath. NavMeshAgent can legitimately have
@@ -1178,9 +1149,6 @@ public class WandererMotor : MonoBehaviour
         );
 
         MovementCompleted?.Invoke(result);
-
-        StartNextTestMovement();
-
     }
 
 
@@ -1326,6 +1294,7 @@ public class WandererMotor : MonoBehaviour
         }
     }
 
+    
     private bool BindToNavMesh()
     {
         RebuildFilter();

@@ -46,6 +46,8 @@ public class WandererController : MonoBehaviour
     private Coroutine localRetryRoutine;
     private WandererDecision lastDecision;
 
+    private WandererDecision pendingDecision;
+
 
     private void Awake()
     {
@@ -60,6 +62,9 @@ public class WandererController : MonoBehaviour
 
         motor.MovementCompleted +=
             HandleMovementCompleted;
+
+        motor.RequestNextDecision +=
+            HandleNextDecisionRequest;
     }
 
     private void OnDestroy()
@@ -68,6 +73,9 @@ public class WandererController : MonoBehaviour
         {
             motor.MovementCompleted -=
                 HandleMovementCompleted;
+            motor.RequestNextDecision -=
+                HandleNextDecisionRequest;
+
         }
     }
 
@@ -109,6 +117,28 @@ public class WandererController : MonoBehaviour
             )
         );
     }
+    private void RequestNextDecisionWhileMoving()
+    {
+        if (!enabled ||
+            decisionInProgress ||
+            pendingDecision != null)
+        {
+            return;
+        }
+
+        decisionInProgress = true;
+
+        WandererPerceptionSnapshot snapshot =
+            perception.Scan();
+
+        StartCoroutine(
+            brain.RequestDecision(
+                snapshot,
+                HandleDecision,
+                HandleDecisionFailure
+            )
+        );
+    }
 
     private void HandleDecision(
         WandererDecision decision)
@@ -132,14 +162,19 @@ public class WandererController : MonoBehaviour
             this
         );
 
-        if (motor.TryMove(decision))
+        // If the Wanderer is already moving,
+        // save this decision for the next movement.
+        if (motor.IsBusy)
         {
+            pendingDecision = decision;
             return;
         }
 
-        // Do not call the LLM again. The same subjective impulse is retained while
-        // Unity tries to find any physically realizable local interpretation.
-        StartLocalRetryLoop();
+        // Otherwise, this is the first movement.
+        if (!motor.TryMove(decision))
+        {
+            StartLocalRetryLoop();
+        }
     }
 
     private void HandleDecisionFailure(
@@ -175,8 +210,53 @@ public class WandererController : MonoBehaviour
             localRetryRoutine = null;
         }
 
-        // This is the ONLY normal trigger for another LLM request.
-        RequestNextDecision();
+        // Best case:
+        // the next LLM decision is already waiting.
+        if (pendingDecision != null)
+        {
+            WandererDecision nextDecision =
+                pendingDecision;
+
+            pendingDecision = null;
+
+            if (!motor.TryMove(nextDecision))
+            {
+                StartLocalRetryLoop();
+            }
+
+            return;
+        }
+
+        // The LLM hasn't answered yet.
+        // DO NOT let Wanderer freeze.
+        //
+        // Use the previous decision as a temporary local movement.
+        if (!motor.TryMoveAnywhere(lastDecision))
+        {
+            StartLocalRetryLoop();
+        }
+    }
+    private void HandleNextDecisionRequest()
+    {
+        if (!enabled ||
+            decisionInProgress ||
+            pendingDecision != null)
+        {
+            return;
+        }
+
+        decisionInProgress = true;
+
+        WandererPerceptionSnapshot snapshot =
+            perception.Scan();
+
+        StartCoroutine(
+            brain.RequestDecision(
+                snapshot,
+                HandleDecision,
+                HandleDecisionFailure
+            )
+        );
     }
 
     private void StartLocalRetryLoop()

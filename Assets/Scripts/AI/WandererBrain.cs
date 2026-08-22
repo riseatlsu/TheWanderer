@@ -74,7 +74,7 @@ public class WandererBrain : MonoBehaviour
     private float maximumStoppingDistance = 20f;
 
     [SerializeField, Min(0f)]
-    private float maximumWaitSeconds = 8f;
+    private float maximumWaitSeconds = 0f;
 
 
     [Header("Personality")]
