@@ -35,7 +35,7 @@ public class WandererMotor : MonoBehaviour
 
     [SerializeField, Min(1f)]
     [Tooltip("Maximum direct distance normally considered for one movement.")]
-    private float maximumMovementDistance = 3000f;
+    private float maximumMovementDistance = 10000f;
 
     [SerializeField, Min(0.05f)]
     [Tooltip("Absolute smallest displacement accepted as real movement.")]
@@ -43,7 +43,7 @@ public class WandererMotor : MonoBehaviour
 
     [SerializeField, Min(0.1f)]
     [Tooltip("Maximum endpoint projection radius.")]
-    private float destinationSampleRadius = 200f;
+    private float destinationSampleRadius = 500f;
 
     [SerializeField, Range(-1f, 1f)]
     [Tooltip("Minimum alignment used only for the preferred directional search.")]
@@ -56,6 +56,93 @@ public class WandererMotor : MonoBehaviour
     [SerializeField, Range(8, 256)]
     [Tooltip("Random candidates tested before deterministic emergency search.")]
     private int randomSearchAttempts = 64;
+
+    [Header("Mini-Mode (short-step) Support")]
+    [SerializeField, Min(0.1f)]
+    [Tooltip("Distance threshold (meters) below which movement is treated as a mini-step.")]
+    private float miniModeDistanceThreshold = 10f;
+
+    [SerializeField, Min(0.1f)]
+    [Tooltip("Maximum fallback radius (meters) used for mini-step recovery searches.")]
+    private float miniModeMaxFallbackDistance = 50f;
+
+    [SerializeField, Min(0.1f)]
+    [Tooltip("Maximum allowed mini-step distance when long-term goals are very large. This caps mini = longTermDistance/5.")]
+    private float miniModeMaxMiniDistance = 75f;
+
+    [SerializeField, Range(1f, 3f)]
+    [Tooltip("Maximum allowed detour factor for mini-mode candidate path length compared to the straight requested distance. Lower values make minis avoid long detours.")]
+    private float miniModeDetourFactor = 1.2f;
+
+    [Header("Debug / Gizmos")]
+    [SerializeField]
+    [Tooltip("Draw debug gizmos for requested headings, arc samples, and selected candidate in the Scene view.")]
+    private bool drawDebugGizmos = true;
+
+    // Debug fields populated during destination search to visualize what the motor tried.
+    private Vector3 debugStartPosition;
+    private Vector3 debugRequestedPoint;
+    private Vector3 debugSelectedCandidate;
+    private readonly System.Collections.Generic.List<Vector3> debugArcSamples =
+        new System.Collections.Generic.List<Vector3>();
+    private readonly System.Collections.Generic.List<Vector3> debugRandomSamples =
+        new System.Collections.Generic.List<Vector3>();
+
+    // Draw debug gizmos in the Scene view when enabled to visualize
+    // what the motor attempted during candidate selection.
+    private void OnDrawGizmos()
+    {
+        if (!drawDebugGizmos)
+        {
+            return;
+        }
+
+        Vector3 start = debugStartPosition;
+
+        // Visualize the configured maximum mini-step radius so designers know the limit.
+        Gizmos.color = Color.yellow;
+        if (miniModeMaxMiniDistance > 0f)
+        {
+            Gizmos.DrawWireSphere(start, miniModeMaxMiniDistance);
+        }
+
+        // Draw the originally requested point (blue line).
+        Gizmos.color = Color.blue;
+        Gizmos.DrawLine(start, debugRequestedPoint);
+
+        // Draw sampled arc points (cyan) and random samples (magenta).
+        Gizmos.color = Color.cyan;
+        foreach (var p in debugArcSamples)
+        {
+            Gizmos.DrawSphere(p, 0.12f);
+        }
+
+        Gizmos.color = Color.magenta;
+        foreach (var p in debugRandomSamples)
+        {
+            Gizmos.DrawSphere(p, 0.08f);
+        }
+
+        // Highlight the chosen candidate (green) if set.
+        if (debugSelectedCandidate != Vector3.zero)
+        {
+            Gizmos.color = Color.green;
+            Gizmos.DrawSphere(debugSelectedCandidate, 0.18f);
+        }
+    }
+
+    [Header("Turning / Arc Movement")]
+    [SerializeField, Min(0.1f)]
+    [Tooltip("Radius (meters) used when sampling an arc in front of the agent to produce smooth turns.")]
+    private float turnRadius = 5f;
+
+    [SerializeField, Range(3, 48)]
+    [Tooltip("Number of samples taken along the arc when searching for a valid NavMesh endpoint.")]
+    private int turnSamples = 12;
+
+    [SerializeField, Range(0f, 180f)]
+    [Tooltip("Minimum signed angle (degrees) between current forward and desired heading to attempt an arc turn.")]
+    private float turnAngleThresholdDegrees = 20f;
 
 
     [Header("Agent Limits")]
@@ -128,6 +215,7 @@ public class WandererMotor : MonoBehaviour
     private NavMeshAgent agent;
     private NavMeshQueryFilter filter;
     private NavMeshPath validationPath;
+
     private Coroutine movementRoutine;
 
     private WandererDecision activeDecision;
@@ -141,6 +229,261 @@ public class WandererMotor : MonoBehaviour
     {
         agent = GetComponent<NavMeshAgent>();
         validationPath = new NavMeshPath();
+    }
+
+    // Random search variant biased toward short distances for mini-step recovery.
+    private bool TryRandomSearchMini(
+        WandererDirection preferredDirection,
+        float preferredDistance,
+        out DestinationCandidate candidate,
+        Vector3? excludedDestination = null)
+    {
+        candidate = default;
+
+        Vector3 start = agent.nextPosition;
+        Vector3 preferredVector = preferredDirection.ToWorldVector();
+
+        int attempts = Mathf.Max(8, randomSearchAttempts / 2);
+
+        float maxFallback = Mathf.Max(miniModeMaxFallbackDistance, preferredDistance * 2f);
+        maxFallback = Mathf.Min(maxFallback, maximumMovementDistance);
+
+        for (int i = 0; i < attempts; i++)
+        {
+            Vector2 random = UnityEngine.Random.insideUnitCircle;
+
+            if (random.sqrMagnitude < 0.001f)
+            {
+                continue;
+            }
+
+            // Bias distances toward smaller values by squaring the random value.
+            float t = Mathf.Pow(UnityEngine.Random.value, 2f);
+            float distance = Mathf.Lerp(
+                absoluteMinimumMovement,
+                maxFallback,
+                t
+            );
+
+            Vector3 requested = start + new Vector3(
+                random.normalized.x,
+                0f,
+                random.normalized.y
+            ) * distance;
+
+            if (TryValidateCandidate(
+                    requested,
+                    preferredVector,
+                    false,
+                    preferredDistance,
+                    out candidate))
+            {
+                // Avoid candidates that require a path much longer than the requested straight distance.
+                // This helps prevent falling back to long detours along NavMesh edges.
+                if (candidate.pathLength > preferredDistance * miniModeDetourFactor)
+                {
+                    continue;
+                }
+                if (IsExcludedRecoveryDestination(
+                        candidate.position,
+                        excludedDestination))
+                {
+                    continue;
+                }
+
+                candidate.searchDirection =
+                    WandererDirectionExtensions.ClosestToVector(
+                        candidate.position - start
+                    );
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryFindArcDestination(
+        Vector3 forwardVector,
+        Vector3 desiredVector,
+        float preferredDistance,
+        float radius,
+        int samples,
+        out DestinationCandidate candidate)
+    {
+        candidate = default;
+
+        Vector3 start = agent.nextPosition;
+
+        // Ensure planar
+        forwardVector.y = 0f;
+        desiredVector.y = 0f;
+
+        if (forwardVector.sqrMagnitude < 0.0001f || desiredVector.sqrMagnitude < 0.0001f)
+        {
+            return false;
+        }
+
+        forwardVector.Normalize();
+        desiredVector.Normalize();
+
+        float signedAngle = Vector3.SignedAngle(forwardVector, desiredVector, Vector3.up);
+
+        if (Mathf.Abs(signedAngle) < 1f)
+        {
+            return false; // no arc needed
+        }
+
+        float sign = Mathf.Sign(signedAngle);
+
+        // Right vector points to agent's right
+        Vector3 right = Vector3.Cross(Vector3.up, forwardVector).normalized;
+
+        Vector3 center = start + right * (radius * sign);
+
+        float startAngle = Mathf.Atan2(start.z - center.z, start.x - center.x) * Mathf.Rad2Deg;
+
+        float totalSweep = Mathf.Abs(signedAngle);
+
+        int take = Mathf.Max(3, samples);
+
+        for (int i = 1; i <= take; i++)
+        {
+            float t = (float)i / take;
+            float sampleAngle = startAngle + sign * (totalSweep * t);
+            float radians = sampleAngle * Mathf.Deg2Rad;
+
+            Vector3 offset = new Vector3(Mathf.Cos(radians), 0f, Mathf.Sin(radians)) * radius;
+            Vector3 point = center + offset;
+
+            float distFromStart = Vector3.Distance(start, point);
+
+            Vector3 requested = point;
+
+            if (distFromStart > preferredDistance)
+            {
+                requested = start + (point - start).normalized * preferredDistance;
+            }
+
+            if (TryValidateCandidate(
+                    requested,
+                    desiredVector,
+                    false,
+                    preferredDistance,
+                    out DestinationCandidate tested))
+            {
+                tested.fallbackStage = "turn arc";
+                tested.searchDirection =
+                    WandererDirectionExtensions.ClosestToVector(tested.position - start);
+                candidate = tested;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Deterministic radial search variant restricted for mini-mode to avoid large fallbacks.
+    private bool TryDeterministicRadialSearchMini(
+        WandererDirection preferredDirection,
+        float preferredDistance,
+        out DestinationCandidate bestCandidate,
+        Vector3? excludedDestination = null)
+    {
+        bestCandidate = default;
+        bool found = false;
+        float bestScore = float.NegativeInfinity;
+
+        Vector3 start = agent.nextPosition;
+        Vector3 preferredVector = preferredDirection.ToWorldVector();
+
+        // Restrict radii to small distances up to miniModeMaxFallbackDistance.
+        float[] candidateRadii = new float[]
+        {
+            absoluteMinimumMovement,
+            absoluteMinimumMovement * 2f,
+            absoluteMinimumMovement * 5f,
+            5f,
+            10f,
+            25f,
+            Mathf.Min(50f, miniModeMaxFallbackDistance)
+        };
+
+        const int angleSamples = 24;
+
+        for (int r = 0; r < candidateRadii.Length; r++)
+        {
+            float radius = Mathf.Clamp(
+                candidateRadii[r],
+                absoluteMinimumMovement,
+                Mathf.Min(maximumMovementDistance, miniModeMaxFallbackDistance)
+            );
+
+            for (int i = 0; i < angleSamples; i++)
+            {
+                float angle =
+                    (360f / angleSamples) * i;
+
+                float radians = angle * Mathf.Deg2Rad;
+
+                Vector3 direction = new Vector3(
+                    Mathf.Sin(radians),
+                    0f,
+                    Mathf.Cos(radians)
+                );
+
+                Vector3 requested = start + direction * radius;
+
+                if (!TryValidateCandidate(
+                        requested,
+                        preferredVector,
+                        false,
+                        preferredDistance,
+                        out DestinationCandidate tested))
+                {
+                    continue;
+                }
+
+                // Avoid selecting candidates that require a path much longer than preferredDistance
+                // during mini-mode deterministic search. This reduces hugging NavMesh edges.
+                if (tested.pathLength > preferredDistance * miniModeDetourFactor)
+                {
+                    continue;
+                }
+
+                if (IsExcludedRecoveryDestination(
+                        tested.position,
+                        excludedDestination))
+                {
+                    continue;
+                }
+
+                float score = ScoreCandidate(
+                    tested,
+                    preferredVector,
+                    preferredDistance,
+                    start
+                );
+
+                if (!found || score > bestScore)
+                {
+                    found = true;
+                    bestScore = score;
+                    bestCandidate = tested;
+                    bestCandidate.searchDirection =
+                        WandererDirectionExtensions.ClosestToVector(
+                            tested.position - start
+                        );
+                }
+            }
+
+            if (found)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private IEnumerator Start()
@@ -177,19 +520,187 @@ public class WandererMotor : MonoBehaviour
     /// </summary>
     public bool TryMove(WandererDecision decision)
     {
+        Debug.Log($"TryMove called: headingDegrees={decision?.headingDegrees.ToString() ?? "null"}, direction={decision?.direction}, distance={decision?.distance.ToString() ?? "null"}, IsBusy={IsBusy}", this);
+
         if (!CanStartMovement() || decision == null)
         {
+            Debug.LogWarning($"TryMove early-fail: CanStartMovement={CanStartMovement()}, decision==null={decision==null}", this);
             return false;
         }
 
-        if (!WandererDirectionExtensions.TryParse(
-                decision.direction,
-                out WandererDirection preferredDirection))
+        // If an explicit headingDegrees is provided, allow arbitrary heading vectors
+        if (decision.headingDegrees >= 0f)
         {
-            preferredDirection = WandererDirection.North;
+            float preferredDistance = Mathf.Clamp(
+                decision.distance,
+                absoluteMinimumMovement,
+                maximumMovementDistance
+            );
+
+            ConfigureAgent(decision);
+
+            float radians = decision.headingDegrees * Mathf.Deg2Rad;
+            Vector3 directionVector = new Vector3(
+                Mathf.Sin(radians),
+                0f,
+                Mathf.Cos(radians)
+            );
+
+            // Try along the exact heading but do not strictly enforce alignment so
+            // short mini-steps can still find nearby NavMesh samples when the
+            // exact projection is slightly off the mesh.
+            DestinationCandidate candidate;
+
+            // First, try a direct projection along the exact heading (lenient alignment).
+            if (TryFindAlongVector(
+                    directionVector,
+                    preferredDistance,
+                    false,
+                    out candidate))
+            {
+                WandererDirection preferredDirectionFromHeading =
+                    WandererDirectionExtensions.ClosestToVector(directionVector);
+
+                return BeginMovement(
+                    decision,
+                    preferredDirectionFromHeading,
+                    preferredDistance,
+                    candidate
+                );
+            }
+
+            // If that fails, try searches biased toward the heading.
+            WandererDirection biasDirection = WandererDirectionExtensions.ClosestToVector(directionVector);
+
+            // Consider using an arc-based search when the desired heading requires a significant turn.
+            Vector3 forwardVector = agent != null ? agent.transform.forward : Vector3.forward;
+            forwardVector = new Vector3(forwardVector.x, 0f, forwardVector.z).normalized;
+
+            float signedAngle = Vector3.SignedAngle(forwardVector, directionVector, Vector3.up);
+
+            // If the angle is larger than the threshold, try an arc-sampled destination to make the agent turn smoothly.
+            if (Mathf.Abs(signedAngle) >= turnAngleThresholdDegrees)
+            {
+                if (TryFindArcDestination(
+                        forwardVector,
+                        directionVector,
+                        preferredDistance,
+                        turnRadius,
+                        turnSamples,
+                        out candidate))
+                {
+                    candidate.fallbackStage = "turn arc";
+
+                    WandererDirection preferredDirectionFromHeading =
+                        WandererDirectionExtensions.ClosestToVector(directionVector);
+
+                    return BeginMovement(
+                        decision,
+                        preferredDirectionFromHeading,
+                        preferredDistance,
+                        candidate
+                    );
+                }
+            }
+
+            bool miniMode = preferredDistance <= miniModeDistanceThreshold;
+
+            if (miniMode)
+            {
+                // Try a small-radius deterministic radial search first.
+                if (TryDeterministicRadialSearchMini(
+                        biasDirection,
+                        preferredDistance,
+                        out candidate))
+                {
+                    candidate.fallbackStage = "deterministic radial fallback (headingDegrees, mini)";
+
+                    return BeginMovement(
+                        decision,
+                        biasDirection,
+                        preferredDistance,
+                        candidate
+                    );
+                }
+
+                // Next try a short-distance random search biased toward small radii.
+                if (TryRandomSearchMini(
+                        biasDirection,
+                        preferredDistance,
+                        out candidate))
+                {
+                    candidate.fallbackStage = "random reachable fallback (headingDegrees, mini)";
+
+                    WandererDirection preferredDirectionFromHeading =
+                        WandererDirectionExtensions.ClosestToVector(directionVector);
+
+                    return BeginMovement(
+                        decision,
+                        preferredDirectionFromHeading,
+                        preferredDistance,
+                        candidate
+                    );
+                }
+
+                // If mini-specific searches failed, fall through to the normal broader searches.
+            }
+
+            // Try the standard deterministic radial search.
+            if (TryDeterministicRadialSearch(
+                    biasDirection,
+                    preferredDistance,
+                    out candidate))
+            {
+                candidate.fallbackStage = "deterministic radial fallback (headingDegrees)";
+
+                return BeginMovement(
+                    decision,
+                    biasDirection,
+                    preferredDistance,
+                    candidate
+                );
+            }
+
+            // As a last resort, try a random reachable fallback biased by the heading.
+            if (TryRandomSearch(
+                    biasDirection,
+                    preferredDistance,
+                    out candidate))
+            {
+                candidate.fallbackStage = "random reachable fallback (headingDegrees)";
+
+                WandererDirection preferredDirectionFromHeading =
+                    WandererDirectionExtensions.ClosestToVector(directionVector);
+
+                return BeginMovement(
+                    decision,
+                    preferredDirectionFromHeading,
+                    preferredDistance,
+                    candidate
+                );
+            }
+
+            Debug.LogWarning(
+                $"WANDERER COULD NOT REALIZE INTENT (headingDegrees)\n" +
+                $"HeadingDegrees: {decision.headingDegrees:F2}\n" +
+                $"Preferred Distance: {preferredDistance:F2} m\n" +
+                "No valid destination was found yet. The controller may retry locally.",
+                this
+            );
+
+            return false;
         }
 
-        float preferredDistance = Mathf.Clamp(
+        WandererDirection parsedDirection;
+
+        if (!WandererDirectionExtensions.TryParse(
+                decision.direction,
+                out parsedDirection))
+        {
+            parsedDirection = WandererDirection.North;
+        }
+
+        float preferredDistance2 = Mathf.Clamp(
             decision.distance,
             absoluteMinimumMovement,
             maximumMovementDistance
@@ -198,14 +709,14 @@ public class WandererMotor : MonoBehaviour
         ConfigureAgent(decision);
 
         if (!TryFindDestination(
-                preferredDirection,
-                preferredDistance,
-                out DestinationCandidate candidate))
+                parsedDirection,
+                preferredDistance2,
+                out DestinationCandidate candidate2))
         {
             Debug.LogWarning(
                 $"WANDERER COULD NOT REALIZE INTENT\n" +
-                $"Preferred Direction: {preferredDirection}\n" +
-                $"Preferred Distance: {preferredDistance:F2} m\n" +
+                $"Preferred Direction: {parsedDirection}\n" +
+                $"Preferred Distance: {preferredDistance2:F2} m\n" +
                 "No valid destination was found yet. The controller may retry locally.",
                 this
             );
@@ -215,10 +726,71 @@ public class WandererMotor : MonoBehaviour
 
         return BeginMovement(
             decision,
-            preferredDirection,
-            preferredDistance,
-            candidate
+            parsedDirection,
+            preferredDistance2,
+            candidate2
         );
+    }
+
+    private bool TryFindAlongVector(
+        Vector3 directionVector,
+        float preferredDistance,
+        bool enforceAlignment,
+        out DestinationCandidate candidate)
+    {
+        candidate = default;
+
+        Vector3 start = agent.nextPosition;
+
+        float far = Mathf.Clamp(
+            preferredDistance,
+            absoluteMinimumMovement,
+            maximumMovementDistance
+        );
+
+        float near = Mathf.Min(
+            absoluteMinimumMovement,
+            far
+        );
+
+        int samples = Mathf.Max(2, directionalDistanceSamples);
+
+        for (int i = 0; i < samples; i++)
+        {
+            float t = samples == 1
+                ? 0f
+                : (float)i / (samples - 1);
+
+            float distance;
+
+            if (near <= 0f || far <= near)
+            {
+                distance = far;
+            }
+            else
+            {
+                distance = far * Mathf.Pow(near / far, t);
+            }
+
+            Vector3 requested = start + directionVector * distance;
+
+            if (TryValidateCandidate(
+                    requested,
+                    directionVector,
+                    enforceAlignment,
+                    preferredDistance,
+                    out candidate))
+            {
+                candidate.searchDirection =
+                    WandererDirectionExtensions.ClosestToVector(
+                        candidate.position - start
+                    );
+
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -548,9 +1120,7 @@ public class WandererMotor : MonoBehaviour
             500f,
             1000f
         };
-
         const int angleSamples = 32;
-
         for (int r = 0; r < radii.Length; r++)
         {
             float radius = Mathf.Clamp(

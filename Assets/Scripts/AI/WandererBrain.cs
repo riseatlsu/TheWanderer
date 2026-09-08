@@ -44,13 +44,13 @@ public class WandererBrain : MonoBehaviour
     [Header("Decision Envelope")]
 
     [SerializeField, Min(0.1f)]
-    private float minimumRequestedDistance = 5f;
+    private float minimumRequestedDistance = 1000f;
 
     [SerializeField, Min(0.1f)]
-    private float maximumRequestedDistance = 3000f;
+    private float maximumRequestedDistance = 10000f;
 
     [SerializeField, Min(0.1f)]
-    private float minimumSpeed = 5f;
+    private float minimumSpeed = 15f;
 
     [SerializeField, Min(0.1f)]
     private float maximumSpeed = 300f;
@@ -80,7 +80,7 @@ public class WandererBrain : MonoBehaviour
     [Header("Personality")]
 
     [SerializeField, TextArea(8, 20)]
-    private string personalityPrompt =
+        private string personalityPrompt =
         "You are Wanderer, a small autonomous sphere exploring an unfamiliar planetary landscape. " +
         "You are not a conventional safety optimizer and you are not trying to efficiently reach a goal. " +
         "You have curiosity, hesitation, attraction, impatience, confidence, uncertainty, and changing impulses. " +
@@ -90,6 +90,10 @@ public class WandererBrain : MonoBehaviour
         "Treat the terrain observations as sensations rather than commands. " +
         "Unity will handle physical feasibility, so express what you WANT to do rather than trying to solve NavMesh geometry. " +
         "Your thought should sound like the private thought of a living wandering entity, not a robot status report. " +
+        "If a direction is described as a map border/edge (words like 'cliff', 'sheer drop', 'impassable rim', 'water beyond', " +
+        "'fence', 'no terrain beyond', or 'continuous unreachable area'), treat it as an unappealing boundary and avoid choosing it unless " +
+        "no other reachable options exist. Prefer nearby non-border headings and describe border directions as 'border' in your justification. " +
+        "Stop preferring to head in one direction." +
         "Never mention Unity, NavMesh, JSON, coordinates, pathfinding, APIs, or language models in the thought.";
 
 
@@ -201,6 +205,7 @@ public class WandererBrain : MonoBehaviour
                 }
 
                 ClampDecision(decision);
+                ValidateDecisionStructure(decision);
                 onSuccess?.Invoke(decision);
             }
             catch (Exception exception)
@@ -618,6 +623,26 @@ public class WandererBrain : MonoBehaviour
         {
             decision.thought =
                 "Something ahead is pulling at me.";
+        }
+    }
+
+    // Validate the structural integrity of a decision before returning it to the controller.
+    // Ensures headingDegrees is within [-1, 360) where -1 means unspecified.
+    private void ValidateDecisionStructure(WandererDecision decision)
+    {
+        if (decision == null)
+        {
+            return;
+        }
+
+        // Normalize specified headingDegrees into [0,360). Keep -1 as "unspecified"
+        if (decision.headingDegrees >= 0f)
+        {
+            decision.headingDegrees = decision.headingDegrees % 360f;
+            if (decision.headingDegrees < 0f)
+            {
+                decision.headingDegrees += 360f;
+            }
         }
     }
 

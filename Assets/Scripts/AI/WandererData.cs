@@ -32,7 +32,8 @@ public class WandererPerceptionSnapshot
 [Serializable]
 public class WandererDecision
 {
-    public string direction;
+    public string direction;                
+    public float headingDegrees = -1f;
     public float distance;
 
     public float speed;
