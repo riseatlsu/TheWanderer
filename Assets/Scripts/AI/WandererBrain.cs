@@ -108,6 +108,9 @@ public class WandererBrain : MonoBehaviour
         new Queue<string>();
 
 
+ 
+
+
     /// <summary>
     /// Requests one structured high-level navigation decision.
     /// </summary>
@@ -648,13 +651,33 @@ public class WandererBrain : MonoBehaviour
 
     private string ResolveApiKey()
     {
-        if (!string.IsNullOrWhiteSpace(apiKeyOverride))
+        // First check the normal process environment.
+        string apiKey =
+            Environment.GetEnvironmentVariable(
+                ApiKeyEnvironmentVariable
+            );
+
+        // If Unity did not inherit it, explicitly read the
+        // machine-level environment variable.
+        if (string.IsNullOrWhiteSpace(apiKey))
         {
-            return apiKeyOverride.Trim();
+            apiKey =
+                Environment.GetEnvironmentVariable(
+                    ApiKeyEnvironmentVariable,
+                    EnvironmentVariableTarget.Machine
+                );
         }
 
-        return Environment.GetEnvironmentVariable(
-            ApiKeyEnvironmentVariable
-        );
+        // Finally, check the user-level environment variable.
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            apiKey =
+                Environment.GetEnvironmentVariable(
+                    ApiKeyEnvironmentVariable,
+                    EnvironmentVariableTarget.User
+                );
+        }
+
+        return apiKey?.Trim();
     }
 }
