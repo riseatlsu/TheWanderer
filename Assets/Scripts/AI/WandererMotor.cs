@@ -22,8 +22,12 @@ using UnityEngine.AI;
 /// destination is actually reached.
 /// </summary>
 [RequireComponent(typeof(NavMeshAgent))]
+[DisallowMultipleComponent]
 public class WandererMotor : MonoBehaviour
 {
+    [SerializeField, Tooltip("Enable detailed navigation diagnostics in the Console.")]
+    private bool showDetailedDiagnostics;
+
     [Header("Initialization")]
 
     [SerializeField, Min(0.1f)]
@@ -53,6 +57,10 @@ public class WandererMotor : MonoBehaviour
     [Tooltip("Number of far-to-near distances tested for each compass heading.")]
     private int directionalDistanceSamples = 10;
 
+    [SerializeField, Min(1f)]
+    [Tooltip("Seconds of forward travel covered by continuity routes while waiting for a new decision.")]
+    private float continuityLookaheadSeconds = 10f;
+
     [SerializeField, Range(8, 256)]
     [Tooltip("Random candidates tested before deterministic emergency search.")]
     private int randomSearchAttempts = 64;
@@ -60,7 +68,11 @@ public class WandererMotor : MonoBehaviour
     [Header("Mini-Mode (short-step) Support")]
     [SerializeField, Min(0.1f)]
     [Tooltip("Distance threshold (meters) below which movement is treated as a mini-step.")]
-    private float miniModeDistanceThreshold = 10f;
+    private float miniModeDistanceThreshold = 200f;
+
+    [SerializeField, Range(0f, 1f)]
+    [Tooltip("Minimum forward alignment accepted for a mini-step recovery route. A low positive value lets the Wanderer skim along NavMesh boundaries.")]
+    private float miniModeMinimumAlignment = 0.05f;
 
     [SerializeField, Min(0.1f)]
     [Tooltip("Maximum fallback radius (meters) used for mini-step recovery searches.")]
@@ -203,12 +215,33 @@ public class WandererMotor : MonoBehaviour
     [Tooltip("How many seconds before arrival the next LLM decision should be requested.")]
     private float nextDecisionLeadTime = 3f;
 
-
     public event Action<WandererMovementResult> MovementCompleted;
     public event Action RequestNextDecision;
 
     public bool IsInitialized { get; private set; }
     public bool IsBusy { get; private set; }
+    public float GetActiveMovementAlignment(float headingDegrees)
+    {
+        if (agent == null)
+        {
+            return -1f;
+        }
+
+        Vector3 movement = activeCandidate.position - agent.nextPosition;
+        movement.y = 0f;
+        if (movement.sqrMagnitude < 0.001f)
+        {
+            return -1f;
+        }
+
+        float radians = headingDegrees * Mathf.Deg2Rad;
+        Vector3 goalDirection = new Vector3(
+            Mathf.Sin(radians),
+            0f,
+            Mathf.Cos(radians)
+        );
+        return Vector3.Dot(goalDirection, movement.normalized);
+    }
 
     public NavMeshAgent Agent => agent;
 
@@ -219,7 +252,14 @@ public class WandererMotor : MonoBehaviour
     private Coroutine movementRoutine;
 
     private WandererDecision activeDecision;
+    private Vector3 lastMovementDirection;
     private DestinationCandidate activeCandidate;
+    private int movementAttemptSequence;
+    private int activeMovementAttemptId;
+    private CandidateSearchDiagnostics candidateSearchDiagnostics;
+    private float pathPendingStartedAt;
+    private bool pathAcquisitionReported;
+    private bool longPathPendingReported;
 
     private float lastDestinationSetTime;
     private bool nextDecisionRequested;
@@ -229,6 +269,18 @@ public class WandererMotor : MonoBehaviour
     {
         agent = GetComponent<NavMeshAgent>();
         validationPath = new NavMeshPath();
+        WandererMotor[] attachedMotors = GetComponents<WandererMotor>();
+        DiagnosticLog(
+            $"[WANDERER_DIAG][MOTOR_SETUP] object={name} motorId={GetInstanceID()} attachedMotorCount={attachedMotors.Length} agentId={(agent != null ? agent.GetInstanceID() : 0)} scale={transform.lossyScale} agentType={(agent != null ? agent.agentTypeID : -1)} radius={(agent != null ? agent.radius : -1f):F2} height={(agent != null ? agent.height : -1f):F2} baseOffset={(agent != null ? agent.baseOffset : -1f):F2} areaMask={(agent != null ? agent.areaMask : 0)} speed={(agent != null ? agent.speed : -1f):F1} acceleration={(agent != null ? agent.acceleration : -1f):F1} angularSpeed={(agent != null ? agent.angularSpeed : -1f):F1} stopping={(agent != null ? agent.stoppingDistance : -1f):F2} autoBraking={(agent != null && agent.autoBraking)}",
+            this
+        );
+        if (attachedMotors.Length > 1)
+        {
+            Debug.LogError(
+                $"[WANDERER_DIAG][DUPLICATE_MOTOR] object={name} count={attachedMotors.Length}; all components share one NavMeshAgent.",
+                this
+            );
+        }
     }
 
     // Random search variant biased toward short distances for mini-step recovery.
@@ -245,8 +297,10 @@ public class WandererMotor : MonoBehaviour
 
         int attempts = Mathf.Max(8, randomSearchAttempts / 2);
 
-        float maxFallback = Mathf.Max(miniModeMaxFallbackDistance, preferredDistance * 2f);
-        maxFallback = Mathf.Min(maxFallback, maximumMovementDistance);
+        float maxFallback = Mathf.Min(
+            miniModeMaxFallbackDistance,
+            Mathf.Max(absoluteMinimumMovement, preferredDistance * 2f)
+        );
 
         for (int i = 0; i < attempts; i++)
         {
@@ -278,6 +332,11 @@ public class WandererMotor : MonoBehaviour
                     preferredDistance,
                     out candidate))
             {
+                if (candidate.alignment < miniModeMinimumAlignment)
+                {
+                    continue;
+                }
+
                 // Avoid candidates that require a path much longer than the requested straight distance.
                 // This helps prevent falling back to long detours along NavMesh edges.
                 if (candidate.pathLength > preferredDistance * miniModeDetourFactor)
@@ -444,6 +503,11 @@ public class WandererMotor : MonoBehaviour
                     continue;
                 }
 
+                if (tested.alignment < miniModeMinimumAlignment)
+                {
+                    continue;
+                }
+
                 // Avoid selecting candidates that require a path much longer than preferredDistance
                 // during mini-mode deterministic search. This reduces hugging NavMesh edges.
                 if (tested.pathLength > preferredDistance * miniModeDetourFactor)
@@ -505,12 +569,9 @@ public class WandererMotor : MonoBehaviour
         agent.updateUpAxis = true;
 
         IsInitialized = true;
-
-        Debug.Log(
-            $"WANDERER MOTOR READY\n" +
-            $"NavMesh Position: {agent.nextPosition}\n" +
-            $"Agent Type ID: {agent.agentTypeID}\n" +
-            $"Area Mask: {agent.areaMask}",
+        NavMeshTriangulation triangulation = NavMesh.CalculateTriangulation();
+        DiagnosticLog(
+            $"[WANDERER_DIAG][MOTOR_READY] motorId={GetInstanceID()} agentId={agent.GetInstanceID()} onNavMesh={agent.isOnNavMesh} nextPosition={agent.nextPosition} transform={transform.position} triangulationVertices={triangulation.vertices.Length} triangulationIndices={triangulation.indices.Length} agentType={agent.agentTypeID} areaMask={agent.areaMask} startupSnapDistance={startupSnapDistance:F1}",
             this
         );
     }
@@ -520,11 +581,19 @@ public class WandererMotor : MonoBehaviour
     /// </summary>
     public bool TryMove(WandererDecision decision)
     {
-        Debug.Log($"TryMove called: headingDegrees={decision?.headingDegrees.ToString() ?? "null"}, direction={decision?.direction}, distance={decision?.distance.ToString() ?? "null"}, IsBusy={IsBusy}", this);
+        return TryMove(decision, false);
+    }
 
-        if (!CanStartMovement() || decision == null)
+    /// <summary>
+    /// Sets a new destination, optionally replacing the active route without stopping
+    /// the NavMeshAgent. Used for continuous mini-step steering and fresh long-term goals.
+    /// </summary>
+    public bool TryMove(WandererDecision decision, bool replaceActiveMovement)
+    {
+        BeginDiagnosticAttempt("TryMove", decision, replaceActiveMovement);
+        if (!CanStartMovement(replaceActiveMovement) || decision == null)
         {
-            Debug.LogWarning($"TryMove early-fail: CanStartMovement={CanStartMovement()}, decision==null={decision==null}", this);
+            LogSearchFailure("unavailable motor or null decision");
             return false;
         }
 
@@ -545,18 +614,23 @@ public class WandererMotor : MonoBehaviour
                 0f,
                 Mathf.Cos(radians)
             );
+            bool miniMode = preferredDistance <= miniModeDistanceThreshold;
 
-            // Try along the exact heading but do not strictly enforce alignment so
-            // short mini-steps can still find nearby NavMesh samples when the
-            // exact projection is slightly off the mesh.
+            DiagnosticLog(
+                $"[WANDERER_DIAG][INTENT] attempt={activeMovementAttemptId} requestedHeading={decision.headingDegrees:F1} quantized={WandererDirectionExtensions.ClosestToVector(directionVector)} distance={preferredDistance:F1} miniMode={miniMode} goalHeading={directionVector} current={agent.nextPosition} velocity={agent.velocity} desired={agent.desiredVelocity} routeBusy={IsBusy} replace={replaceActiveMovement}",
+                this
+            );
+
             DestinationCandidate candidate;
 
-            // First, try a direct projection along the exact heading (lenient alignment).
+            // Keep projected mini destinations moving forward instead of accepting
+            // a nearby sample that sends the Wanderer sideways or backward.
             if (TryFindAlongVector(
                     directionVector,
                     preferredDistance,
-                    false,
-                    out candidate))
+                    true,
+                    out candidate,
+                    miniMode ? miniModeMinimumAlignment : minimumPreferredAlignment))
             {
                 WandererDirection preferredDirectionFromHeading =
                     WandererDirectionExtensions.ClosestToVector(directionVector);
@@ -589,21 +663,22 @@ public class WandererMotor : MonoBehaviour
                         turnSamples,
                         out candidate))
                 {
-                    candidate.fallbackStage = "turn arc";
+                    if (!miniMode || candidate.alignment >= miniModeMinimumAlignment)
+                    {
+                        candidate.fallbackStage = "turn arc";
 
-                    WandererDirection preferredDirectionFromHeading =
-                        WandererDirectionExtensions.ClosestToVector(directionVector);
+                        WandererDirection preferredDirectionFromHeading =
+                            WandererDirectionExtensions.ClosestToVector(directionVector);
 
-                    return BeginMovement(
-                        decision,
-                        preferredDirectionFromHeading,
-                        preferredDistance,
-                        candidate
-                    );
+                        return BeginMovement(
+                            decision,
+                            preferredDirectionFromHeading,
+                            preferredDistance,
+                            candidate
+                        );
+                    }
                 }
             }
-
-            bool miniMode = preferredDistance <= miniModeDistanceThreshold;
 
             if (miniMode)
             {
@@ -642,7 +717,11 @@ public class WandererMotor : MonoBehaviour
                     );
                 }
 
-                // If mini-specific searches failed, fall through to the normal broader searches.
+                // A mini-step that cannot move forward locally is blocked. Do not
+                // let broad recovery searches choose a distant route that can loop
+                // back across the same area.
+                LogSearchFailure($"mini heading unavailable heading={decision.headingDegrees:F1} preferred={biasDirection} miniThreshold={miniModeDistanceThreshold:F1} minAlignment={miniModeMinimumAlignment:F2}");
+                return false;
             }
 
             // Try the standard deterministic radial search.
@@ -680,14 +759,7 @@ public class WandererMotor : MonoBehaviour
                 );
             }
 
-            Debug.LogWarning(
-                $"WANDERER COULD NOT REALIZE INTENT (headingDegrees)\n" +
-                $"HeadingDegrees: {decision.headingDegrees:F2}\n" +
-                $"Preferred Distance: {preferredDistance:F2} m\n" +
-                "No valid destination was found yet. The controller may retry locally.",
-                this
-            );
-
+            LogSearchFailure($"heading candidate unavailable heading={decision.headingDegrees:F1} preferred={biasDirection}");
             return false;
         }
 
@@ -713,14 +785,7 @@ public class WandererMotor : MonoBehaviour
                 preferredDistance2,
                 out DestinationCandidate candidate2))
         {
-            Debug.LogWarning(
-                $"WANDERER COULD NOT REALIZE INTENT\n" +
-                $"Preferred Direction: {parsedDirection}\n" +
-                $"Preferred Distance: {preferredDistance2:F2} m\n" +
-                "No valid destination was found yet. The controller may retry locally.",
-                this
-            );
-
+            LogSearchFailure($"compass candidate unavailable preferred={parsedDirection} requested={preferredDistance2:F1}");
             return false;
         }
 
@@ -736,7 +801,8 @@ public class WandererMotor : MonoBehaviour
         Vector3 directionVector,
         float preferredDistance,
         bool enforceAlignment,
-        out DestinationCandidate candidate)
+        out DestinationCandidate candidate,
+        float alignmentThreshold = -1f)
     {
         candidate = default;
 
@@ -774,12 +840,25 @@ public class WandererMotor : MonoBehaviour
 
             Vector3 requested = start + directionVector * distance;
 
-            if (TryValidateCandidate(
+            float requiredAlignment = alignmentThreshold >= 0f
+                ? alignmentThreshold
+                : minimumPreferredAlignment;
+
+            bool candidateValid = TryValidateCandidate(
                     requested,
                     directionVector,
-                    enforceAlignment,
+                    false,
                     preferredDistance,
-                    out candidate))
+                    out candidate);
+
+            if (candidateValid &&
+                enforceAlignment &&
+                candidate.alignment < requiredAlignment)
+            {
+                continue;
+            }
+
+            if (candidateValid)
             {
                 candidate.searchDirection =
                     WandererDirectionExtensions.ClosestToVector(
@@ -797,22 +876,36 @@ public class WandererMotor : MonoBehaviour
     /// Starts a locally chosen movement without requiring a new LLM decision.
     /// Used only as an anti-freeze fallback.
     /// </summary>
-    public bool TryMoveAnywhere(WandererDecision sourceDecision = null)
+    public bool TryMoveAnywhere(
+        WandererDecision sourceDecision = null,
+        bool replaceActiveMovement = false)
     {
-        if (!CanStartMovement())
+        BeginDiagnosticAttempt("TryMoveAnywhere", sourceDecision, replaceActiveMovement);
+        if (!CanStartMovement(replaceActiveMovement))
         {
+            LogSearchFailure("motor unavailable");
             return false;
         }
 
         WandererDecision decision = sourceDecision ?? CreateNeutralFallbackDecision();
-
         ConfigureAgent(decision);
 
         WandererDirection preferredDirection;
 
-        if (!WandererDirectionExtensions.TryParse(
-                decision.direction,
-                out preferredDirection))
+        if (decision.headingDegrees >= 0f)
+        {
+            float radians = decision.headingDegrees * Mathf.Deg2Rad;
+            Vector3 headingVector = new Vector3(
+                Mathf.Sin(radians),
+                0f,
+                Mathf.Cos(radians)
+            );
+            preferredDirection =
+                WandererDirectionExtensions.ClosestToVector(headingVector);
+        }
+        else if (!WandererDirectionExtensions.TryParse(
+                     decision.direction,
+                     out preferredDirection))
         {
             preferredDirection =
                 (WandererDirection)UnityEngine.Random.Range(0, 8);
@@ -826,11 +919,17 @@ public class WandererMotor : MonoBehaviour
             maximumMovementDistance
         );
 
+        DiagnosticLog(
+            $"[WANDERER_DIAG][FALLBACK_INTENT] attempt={activeMovementAttemptId} sourceHeading={decision.headingDegrees:F1} sourceDirection={decision.direction} quantized={preferredDirection} distance={preferredDistance:F1} velocity={agent.velocity} previousRoute={lastMovementDirection}",
+            this
+        );
+
         if (!TryFindDestination(
                 preferredDirection,
                 preferredDistance,
                 out DestinationCandidate candidate))
         {
+            LogSearchFailure($"no candidate preferred={preferredDirection} distance={preferredDistance:F1}");
             return false;
         }
 
@@ -842,14 +941,217 @@ public class WandererMotor : MonoBehaviour
         );
     }
 
-    private bool CanStartMovement()
+    /// <summary>
+    /// Attempts one straight escape waypoint perpendicular to the repeated travel
+    /// axis. If that line is unavailable, tests progressively wider headings while
+    /// still requiring the sampled destination to remain in front of each heading.
+    /// </summary>
+    public bool TryMoveOscillationEscape(
+        Vector3 preferredDirection,
+        float preferredDistance,
+        WandererDecision sourceDecision)
+    {
+        BeginDiagnosticAttempt("OscillationEscape", sourceDecision, false);
+        if (!CanStartMovement() || sourceDecision == null)
+        {
+            LogSearchFailure("escape motor unavailable or decision missing");
+            return false;
+        }
+
+        preferredDirection.y = 0f;
+        if (preferredDirection.sqrMagnitude < 0.001f)
+        {
+            LogSearchFailure("escape direction is zero");
+            return false;
+        }
+        preferredDirection.Normalize();
+
+        float distance = Mathf.Clamp(
+            preferredDistance,
+            absoluteMinimumMovement,
+            maximumMovementDistance
+        );
+        ConfigureAgent(sourceDecision);
+        lastMovementDirection = Vector3.zero;
+
+        float[] offsets = { 0f, 45f, -45f, 90f, -90f, 135f, -135f, 180f };
+        for (int i = 0; i < offsets.Length; i++)
+        {
+            Vector3 direction = Quaternion.AngleAxis(offsets[i], Vector3.up) * preferredDirection;
+            if (!TryFindAlongVector(
+                    direction,
+                    distance,
+                    true,
+                    out DestinationCandidate candidate,
+                    miniModeMinimumAlignment))
+            {
+                continue;
+            }
+
+            candidate.fallbackStage = offsets[i] == 0f
+                ? "oscillation escape (straight lateral waypoint)"
+                : $"oscillation escape (straight waypoint offset {offsets[i]:+0;-0} deg)";
+            DiagnosticLog(
+                $"[WANDERER][ESCAPE_WAYPOINT] heading={Mathf.Repeat(Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg, 360f):F1} offset={offsets[i]:F0} destination={candidate.position} projectionOffset={Vector3.Distance(candidate.requestedPosition, candidate.position):F1} alignment={candidate.alignment:F2} distance={candidate.actualDistance:F1}.",
+                this
+            );
+            return BeginMovement(
+                sourceDecision,
+                WandererDirectionExtensions.ClosestToVector(direction),
+                distance,
+                candidate
+            );
+        }
+
+        LogSearchFailure("no aligned escape waypoint found");
+        return false;
+    }
+
+    /// <summary>
+    /// Starts a recovery move in the direction of the last successful route.
+    /// Candidate directions behind the Wanderer are excluded, preventing the
+    /// broad compass fallback from alternating between two reachable points.
+    /// </summary>
+    public bool TryMoveContinuously(WandererDecision sourceDecision = null)
+    {
+        BeginDiagnosticAttempt("Continuity", sourceDecision, IsBusy);
+        if (!CanStartMovement(allowBusy: true))
+        {
+            LogSearchFailure("motor unavailable");
+            return false;
+        }
+
+        Vector3 direction = lastMovementDirection;
+        if (direction.sqrMagnitude < 0.001f && agent.velocity.sqrMagnitude > 0.01f)
+        {
+            direction = agent.velocity;
+        }
+        if (direction.sqrMagnitude < 0.001f)
+        {
+            direction = transform.forward;
+        }
+        direction.y = 0f;
+        direction.Normalize();
+
+        WandererDecision source = sourceDecision ?? CreateNeutralFallbackDecision();
+        float heading = Mathf.Repeat(Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg, 360f);
+        WandererDecision decision = new WandererDecision
+        {
+            direction = string.Empty,
+            headingDegrees = heading,
+            distance = source.distance,
+            speed = source.speed,
+            acceleration = source.acceleration,
+            angularSpeed = source.angularSpeed,
+            stoppingDistance = source.stoppingDistance,
+            waitSeconds = 0f,
+            mood = source.mood,
+            thought = source.thought
+        };
+
+        float continuityDistance = Mathf.Max(
+            200f,
+            agent.speed * continuityLookaheadSeconds
+        );
+        float distance = Mathf.Clamp(
+            continuityDistance,
+            absoluteMinimumMovement,
+            maximumMovementDistance);
+        ConfigureAgent(decision);
+
+        WandererDirection preferred = WandererDirectionExtensions.ClosestToVector(direction);
+        WandererDirection[] searchOrder = preferred.GetFallbackOrder();
+        DiagnosticLog(
+            $"[WANDERER_DIAG][CONTINUITY_SEARCH] attempt={activeMovementAttemptId} source={direction} preferred={preferred} velocity={agent.velocity} desired={agent.desiredVelocity} search={string.Join(",", searchOrder)} forwardDotMinimum=0.05 distance={distance:F1}",
+            this
+        );
+        for (int i = 0; i < searchOrder.Length; i++)
+        {
+            Vector3 candidateDirection = searchOrder[i].ToWorldVector();
+            if (Vector3.Dot(direction, candidateDirection) < 0.05f)
+            {
+                continue;
+            }
+
+            if (TryFindAlongVector(
+                    candidateDirection,
+                    distance,
+                    true,
+                    out DestinationCandidate candidate,
+                    0.05f))
+            {
+                candidate.fallbackStage = i == 0
+                    ? "continuity heading"
+                    : $"continuity neighbor ({searchOrder[i]})";
+                return BeginMovement(decision, searchOrder[i], distance, candidate);
+            }
+        }
+
+        LogSearchFailure("no forward candidate found");
+        return false;
+    }
+
+    private void BeginDiagnosticAttempt(string source, WandererDecision decision, bool replaceActiveMovement)
+    {
+        activeMovementAttemptId = ++movementAttemptSequence;
+        candidateSearchDiagnostics = default;
+        DiagnosticLog(
+            $"[WANDERER_DIAG][MOVE_ATTEMPT] attempt={activeMovementAttemptId} source={source} replace={replaceActiveMovement} busy={IsBusy} position={(agent != null ? agent.nextPosition.ToString() : "no-agent")} onNavMesh={(agent != null && agent.isOnNavMesh)} stopped={(agent != null && agent.isStopped)} hasPath={(agent != null && agent.hasPath)} pending={(agent != null && agent.pathPending)} target={(agent != null ? agent.destination.ToString() : "no-agent")} decision={(decision == null ? "null" : $"heading={decision.headingDegrees:F1},direction={decision.direction},distance={decision.distance:F1},speed={decision.speed:F1},accel={decision.acceleration:F1},stop={decision.stoppingDistance:F2},wait={decision.waitSeconds:F1}")}",
+            this
+        );
+    }
+
+    private void LogSearchFailure(string reason)
+    {
+        if (showDetailedDiagnostics)
+        {
+            Debug.Log(
+                $"[WANDERER_DIAG][SEARCH_FAILED] attempt={activeMovementAttemptId} reason={reason} stats={candidateSearchDiagnostics} compassProbe=[{BuildCompassProbeReport()}] position={(agent != null ? agent.nextPosition.ToString() : "no-agent")} velocity={(agent != null ? agent.velocity.ToString() : "no-agent")} onNavMesh={(agent != null && agent.isOnNavMesh)} agentType={(agent != null ? agent.agentTypeID : -1)} areaMask={(agent != null ? agent.areaMask : 0)}",
+                this
+            );
+        }
+    }
+
+    private string BuildCompassProbeReport()
+    {
+        if (agent == null || !agent.enabled || !agent.isOnNavMesh)
+        {
+            return "agent-not-on-navmesh";
+        }
+
+        System.Text.StringBuilder report = new System.Text.StringBuilder();
+        float distance = Mathf.Clamp(200f, absoluteMinimumMovement, maximumMovementDistance);
+        float radius = Mathf.Min(destinationSampleRadius, Mathf.Max(2f, distance * 0.35f));
+        for (int i = 0; i < 8; i++)
+        {
+            WandererDirection direction = (WandererDirection)i;
+            Vector3 vector = direction.ToWorldVector();
+            Vector3 requested = agent.nextPosition + vector * distance;
+            if (!NavMesh.SamplePosition(requested, out NavMeshHit hit, radius, filter))
+            {
+                report.Append($"{direction}=sample-miss;");
+                continue;
+            }
+
+            validationPath.ClearCorners();
+            bool calculated = agent.CalculatePath(hit.position, validationPath);
+            float alignment = Vector3.Dot(
+                vector,
+                new Vector3(hit.position.x - agent.nextPosition.x, 0f, hit.position.z - agent.nextPosition.z).normalized);
+            report.Append($"{direction}=snap:{Vector3.Distance(requested, hit.position):F0},align:{alignment:F2},path:{(calculated ? validationPath.status.ToString() : "calc-fail")},len:{(calculated ? CalculatePathLength(validationPath) : 0f):F0};");
+        }
+
+        return report.ToString();
+    }
+
+    private bool CanStartMovement(bool allowBusy = false)
     {
         if (!IsInitialized)
         {
             return false;
         }
 
-        if (IsBusy)
+        if (IsBusy && !allowBusy)
         {
             return false;
         }
@@ -902,6 +1204,8 @@ public class WandererMotor : MonoBehaviour
             maximumAngularSpeed
         );
 
+        agent.autoBraking = false;
+
         agent.stoppingDistance = Mathf.Clamp(
             decision.stoppingDistance,
             0f,
@@ -920,22 +1224,30 @@ public class WandererMotor : MonoBehaviour
 
         WandererDirection[] searchOrder =
             preferredDirection.GetFallbackOrder();
+        string compassOutcomes = string.Empty;
 
         // 1 + 2. Directional search: preferred heading first, then neighbors.
         for (int i = 0; i < searchOrder.Length; i++)
         {
             bool enforceAlignment = i == 0;
 
-            if (TryFindAlongDirection(
+            bool foundDirection = TryFindAlongDirection(
                     searchOrder[i],
                     preferredDistance,
                     enforceAlignment,
-                    out candidate))
+                    out candidate);
+            compassOutcomes += $"{searchOrder[i]}={(foundDirection ? "hit" : "miss")};";
+            if (foundDirection)
             {
                 candidate.fallbackStage =
                     i == 0
                         ? "preferred heading"
                         : $"neighbor heading ({searchOrder[i]})";
+
+                DiagnosticLog(
+                    $"[WANDERER_DIAG][COMPASS_FALLBACK_SELECTED] attempt={activeMovementAttemptId} preferred={preferredDirection} order={string.Join(",", searchOrder)} outcomes={compassOutcomes} selected={searchOrder[i]} firstReachableIndex={i} actualAlignment={candidate.alignment:F2} actualDistance={candidate.actualDistance:F1} pathLength={candidate.pathLength:F1}",
+                    this
+                );
 
                 return true;
             }
@@ -1279,6 +1591,7 @@ public class WandererMotor : MonoBehaviour
         out DestinationCandidate candidate)
     {
         candidate = default;
+        candidateSearchDiagnostics.tested++;
 
         Vector3 start = agent.nextPosition;
 
@@ -1296,8 +1609,15 @@ public class WandererMotor : MonoBehaviour
                 projectionRadius,
                 filter))
         {
+            candidateSearchDiagnostics.sampleMisses++;
             return false;
         }
+
+        float projectionOffset = Vector3.Distance(requestedDestination, hit.position);
+        candidateSearchDiagnostics.maxProjectionOffset = Mathf.Max(
+            candidateSearchDiagnostics.maxProjectionOffset,
+            projectionOffset
+        );
 
         Vector3 displacement = hit.position - start;
         Vector3 horizontal = new Vector3(
@@ -1311,6 +1631,7 @@ public class WandererMotor : MonoBehaviour
         if (actualDistance < absoluteMinimumMovement ||
             actualDistance > maximumMovementDistance + 0.01f)
         {
+            candidateSearchDiagnostics.distanceRejected++;
             return false;
         }
 
@@ -1324,9 +1645,9 @@ public class WandererMotor : MonoBehaviour
             );
         }
 
-        if (enforceAlignment &&
-            alignment < minimumPreferredAlignment)
+        if (enforceAlignment && alignment < minimumPreferredAlignment)
         {
+            candidateSearchDiagnostics.alignmentRejected++;
             return false;
         }
 
@@ -1340,6 +1661,14 @@ public class WandererMotor : MonoBehaviour
         if (!calculated ||
             validationPath.status != NavMeshPathStatus.PathComplete)
         {
+            if (!calculated)
+            {
+                candidateSearchDiagnostics.pathCalculationFailed++;
+            }
+            else
+            {
+                candidateSearchDiagnostics.incompletePath++;
+            }
             return false;
         }
 
@@ -1348,12 +1677,16 @@ public class WandererMotor : MonoBehaviour
 
         if (pathLength < absoluteMinimumMovement)
         {
+            candidateSearchDiagnostics.pathTooShort++;
             return false;
         }
+
+        candidateSearchDiagnostics.valid++;
 
         candidate = new DestinationCandidate
         {
             position = hit.position,
+            requestedPosition = requestedDestination,
             requestedDistance = preferredDistance,
             actualDistance = actualDistance,
             pathLength = pathLength,
@@ -1397,6 +1730,15 @@ public class WandererMotor : MonoBehaviour
         float preferredDistance,
         DestinationCandidate candidate)
     {
+        Vector3 priorMovementDirection = lastMovementDirection;
+        Vector3 proposedDirection = candidate.position - agent.nextPosition;
+        proposedDirection.y = 0f;
+        proposedDirection.Normalize();
+        float reversalDot = priorMovementDirection.sqrMagnitude > 0.001f
+            ? Vector3.Dot(priorMovementDirection, proposedDirection)
+            : 1f;
+        float configuredStoppingDistance = agent.stoppingDistance;
+
         EnsureStoppingDistanceAllowsMotion(
             candidate.actualDistance
         );
@@ -1405,11 +1747,10 @@ public class WandererMotor : MonoBehaviour
 
         if (!agent.SetDestination(candidate.position))
         {
-            Debug.LogWarning(
-                "NavMeshAgent rejected a validated destination.",
+            Debug.LogError(
+                $"[Wanderer] Unity rejected the movement destination {candidate.position:F1}.",
                 this
             );
-
             return false;
         }
 
@@ -1417,7 +1758,21 @@ public class WandererMotor : MonoBehaviour
 
         activeDecision = decision;
         activeCandidate = candidate;
+        if (proposedDirection.sqrMagnitude > 0.001f)
+        {
+            lastMovementDirection = proposedDirection;
+        }
         nextDecisionRequested = false;
+        pathPendingStartedAt = Time.time;
+        pathAcquisitionReported = false;
+        longPathPendingReported = false;
+
+        DiagnosticLog(
+            $"[WANDERER_DIAG][MOVE_SELECTED] attempt={activeMovementAttemptId} requestedHeading={decision.headingDegrees:F1} requestedDirection={decision.direction} preferred={preferredDirection} actual={candidate.searchDirection} actualHeading={candidate.searchDirection.ToHeadingDegrees():F1} fallback='{candidate.fallbackStage}' requestedPoint={candidate.requestedPosition} sampledPoint={candidate.position} projectionOffset={Vector3.Distance(candidate.requestedPosition, candidate.position):F1} direct={candidate.actualDistance:F1} path={candidate.pathLength:F1} pathRatio={candidate.pathLength / Mathf.Max(0.1f, candidate.actualDistance):F2} alignment={candidate.alignment:F2} reversalDot={reversalDot:F2} priorDirection={priorMovementDirection} selectedDirection={proposedDirection} speed={agent.speed:F1} accel={agent.acceleration:F1} angular={agent.angularSpeed:F1} stoppingBefore={configuredStoppingDistance:F2} stoppingAfter={agent.stoppingDistance:F2} scale={transform.lossyScale} searchStats={candidateSearchDiagnostics}",
+            this
+        );
+
+        Debug.Log($"[Wanderer] MOVING toward {candidate.position:F1} ({candidate.actualDistance:F0} m; {candidate.fallbackStage}).", this);
 
         IsBusy = true;
 
@@ -1431,18 +1786,6 @@ public class WandererMotor : MonoBehaviour
                 preferredDirection,
                 preferredDistance
             )
-        );
-
-        Debug.Log(
-            $"WANDERER MOVEMENT STARTED\n" +
-            $"Desired Direction: {preferredDirection}\n" +
-            $"Realized Direction: {candidate.searchDirection}\n" +
-            $"Desired Distance: {preferredDistance:F2} m\n" +
-            $"Actual Distance: {candidate.actualDistance:F2} m\n" +
-            $"Path Length: {candidate.pathLength:F2} m\n" +
-            $"Fallback: {candidate.fallbackStage}\n" +
-            $"Destination: {candidate.position}",
-            this
         );
 
         return true;
@@ -1464,13 +1807,14 @@ public class WandererMotor : MonoBehaviour
             if (!agent.isOnNavMesh)
             {
                 Debug.LogWarning(
-                    "Wanderer left the NavMesh. Attempting local recovery.",
+                    $"[Wanderer] Agent left the NavMesh at {agent.nextPosition:F1}; attempting to recover its route.",
                     this
                 );
-
-                if (!RecoverMovement(
+                bool recovered = RecoverMovement(
                         preferredDirection,
-                        preferredDistance))
+                        preferredDistance);
+                LogRecoveryResult("off-mesh", recovered);
+                if (!recovered)
                 {
                     yield return new WaitForSeconds(
                         recoveryRetryDelay
@@ -1488,23 +1832,49 @@ public class WandererMotor : MonoBehaviour
             // signals.
             if (agent.pathPending)
             {
+                if (!longPathPendingReported && Time.time - pathPendingStartedAt >= pathAcquisitionGrace)
+                {
+                    longPathPendingReported = true;
+                    Debug.LogWarning(
+                        $"[Wanderer] NavMesh route is taking longer than expected to calculate (target {agent.destination:F1}).",
+                        this
+                    );
+                }
                 yield return null;
                 continue;
+            }
+
+            if (!pathAcquisitionReported)
+            {
+                pathAcquisitionReported = true;
+                DiagnosticLog(
+                    $"[WANDERER_DIAG][PATH_READY] attempt={activeMovementAttemptId} latency={Time.time - pathPendingStartedAt:F3} hasPath={agent.hasPath} status={(agent.hasPath ? agent.pathStatus.ToString() : "none")} corners={(agent.hasPath ? agent.path.corners.Length : 0)} remaining={SafeRemainingDistance():F1} destination={agent.destination} steeringTarget={agent.steeringTarget} current={agent.nextPosition} velocity={agent.velocity} desired={agent.desiredVelocity}",
+                    this
+                );
             }
 
             if (!nextDecisionRequested)
             {
                 float remaining = SafeRemainingDistance();
 
-                float leadDistance =
-                    Mathf.Max(
-                        agent.stoppingDistance + arrivalTolerance,
-                        agent.speed * nextDecisionLeadTime
-                    );
+                float minimumLead = agent.stoppingDistance + arrivalTolerance;
+                float configuredLead = Mathf.Max(
+                    minimumLead,
+                    agent.speed * nextDecisionLeadTime
+                );
+                float halfPathLead = Mathf.Max(
+                    minimumLead,
+                    activeCandidate.pathLength * 0.5f
+                );
+                float leadDistance = Mathf.Min(configuredLead, halfPathLead);
 
                 if (remaining >= 0f && remaining <= leadDistance)
                 {
                     nextDecisionRequested = true;
+                    DiagnosticLog(
+                        $"[WANDERER_DIAG][LOOKAHEAD] attempt={activeMovementAttemptId} remaining={remaining:F1} configuredLead={configuredLead:F1} halfPathLead={halfPathLead:F1} actualLead={leadDistance:F1} pathLength={activeCandidate.pathLength:F1} speed={agent.speed:F1} velocity={agent.velocity} desired={agent.desiredVelocity} target={activeCandidate.position}",
+                        this
+                    );
                     RequestNextDecision?.Invoke();
                 }
             }
@@ -1535,15 +1905,14 @@ public class WandererMotor : MonoBehaviour
                 }
 
                 Debug.LogWarning(
-                    $"Wanderer's route is unavailable or invalid. " +
-                    $"hasPath={agent.hasPath}, status={agent.pathStatus}. " +
-                    "Choosing a different local destination.",
+                    $"[Wanderer] Current route became invalid near {agent.nextPosition:F1}; searching for another route.",
                     this
                 );
-
-                if (!RecoverMovement(
+                bool recovered = RecoverMovement(
                         preferredDirection,
-                        preferredDistance))
+                        preferredDistance);
+                LogRecoveryResult("invalid-path", recovered);
+                if (!recovered)
                 {
                     yield return new WaitForSeconds(
                         recoveryRetryDelay
@@ -1590,16 +1959,14 @@ public class WandererMotor : MonoBehaviour
             if (stalled || timedOut)
             {
                 Debug.LogWarning(
-                    $"Wanderer needs a local replan. " +
-                    $"Reason: {(stalled ? "stalled" : "timeout")}. " +
-                    $"Remaining: {SafeRemainingDistance():F2} m. " +
-                    $"Velocity: {agent.velocity.magnitude:F2} m/s.",
+                    $"[Wanderer] Movement stalled; trying another route from {agent.nextPosition:F1}.",
                     this
                 );
-
-                if (!RecoverMovement(
+                bool recovered = RecoverMovement(
                         preferredDirection,
-                        preferredDistance))
+                        preferredDistance);
+                LogRecoveryResult(stalled ? "stall" : "timeout", recovered);
+                if (!recovered)
                 {
                     yield return new WaitForSeconds(
                         recoveryRetryDelay
@@ -1663,17 +2030,17 @@ public class WandererMotor : MonoBehaviour
         WandererDirection preferredDirection,
         float preferredDistance)
     {
-        if (agent.isOnNavMesh)
-        {
-            agent.ResetPath();
-        }
-
         float waitSeconds = activeDecision != null
             ? Mathf.Max(0f, activeDecision.waitSeconds)
             : 0f;
 
         if (waitSeconds > 0f)
         {
+            if (agent.isOnNavMesh)
+            {
+                agent.ResetPath();
+            }
+
             yield return new WaitForSeconds(waitSeconds);
         }
 
@@ -1709,15 +2076,12 @@ public class WandererMotor : MonoBehaviour
         IsBusy = false;
         movementRoutine = null;
 
-        Debug.Log(
-            $"WANDERER ARRIVED\n" +
-            $"Desired Direction: {result.desiredDirection}\n" +
-            $"Realized Direction: {result.realizedDirection}\n" +
-            $"Actual Distance: {result.actualDistance:F2} m\n" +
-            $"Fallback: {result.fallbackStage}",
+        DiagnosticLog(
+            $"[WANDERER_DIAG][ARRIVED] attempt={activeMovementAttemptId} wanted={result.desiredDirection} realized={result.realizedDirection} fallback='{result.fallbackStage}' distance={result.actualDistance:F1}/{result.desiredDistance:F1} path={result.pathLength:F1} destination={result.destination} position={agent.nextPosition} velocity={agent.velocity} desiredVelocity={agent.desiredVelocity} speed={agent.speed:F1} accel={agent.acceleration:F1} elapsed={Time.time - lastDestinationSetTime:F2} wait={waitSeconds:F2} stopped={agent.isStopped}",
             this
         );
 
+        Debug.Log($"[Wanderer] ARRIVED at {agent.nextPosition:F1} after {result.actualDistance:F0} m.", this);
         MovementCompleted?.Invoke(result);
     }
 
@@ -1730,6 +2094,10 @@ public class WandererMotor : MonoBehaviour
         WandererDirection preferredDirection,
         float preferredDistance)
     {
+        DiagnosticLog(
+            $"[WANDERER_DIAG][RECOVERY_BEGIN] attempt={activeMovementAttemptId} preferred={preferredDirection} distance={preferredDistance:F1} current={agent.nextPosition} failedTarget={activeCandidate.position} hasPath={agent.hasPath} status={(agent.hasPath ? agent.pathStatus.ToString() : "none")} velocity={agent.velocity}",
+            this
+        );
         RebuildFilter();
 
         if (!agent.isOnNavMesh &&
@@ -1787,16 +2155,20 @@ public class WandererMotor : MonoBehaviour
 
         activeCandidate = candidate;
 
-        Debug.Log(
-            $"WANDERER LOCAL REPLAN\n" +
-            $"Previous Destination: {failedDestination}\n" +
-            $"New Destination: {candidate.position}\n" +
-            $"Separation: {Vector3.Distance(failedDestination, candidate.position):F2} m\n" +
-            $"Fallback: {candidate.fallbackStage}",
+        DiagnosticLog(
+            $"[WANDERER_DIAG][RECOVERY_SELECTED] attempt={activeMovementAttemptId} preferred={preferredDirection} actual={candidate.searchDirection} target={candidate.position} separation={Vector3.Distance(failedDestination, candidate.position):F1} alignment={candidate.alignment:F2} path={candidate.pathLength:F1} fallback='{candidate.fallbackStage}' stats={candidateSearchDiagnostics}",
             this
         );
 
         return true;
+    }
+
+    private void LogRecoveryResult(string reason, bool recovered)
+    {
+        DiagnosticLog(
+            $"[WANDERER_DIAG][RECOVERY_RESULT] attempt={activeMovementAttemptId} reason={reason} recovered={recovered} destination={(agent != null ? agent.destination.ToString() : "no-agent")} stats={candidateSearchDiagnostics}",
+            this
+        );
     }
 
 
@@ -2007,11 +2379,39 @@ public class WandererMotor : MonoBehaviour
     private struct DestinationCandidate
     {
         public Vector3 position;
+        public Vector3 requestedPosition;
         public float requestedDistance;
         public float actualDistance;
         public float pathLength;
         public float alignment;
         public WandererDirection searchDirection;
         public string fallbackStage;
+    }
+
+    private struct CandidateSearchDiagnostics
+    {
+        public int tested;
+        public int sampleMisses;
+        public int distanceRejected;
+        public int alignmentRejected;
+        public int pathCalculationFailed;
+        public int incompletePath;
+        public int pathTooShort;
+        public int valid;
+        public float maxProjectionOffset;
+
+        public override string ToString()
+        {
+            return $"tested={tested},sampleMiss={sampleMisses},distanceReject={distanceRejected},alignmentReject={alignmentRejected},calcFail={pathCalculationFailed},incomplete={incompletePath},tooShort={pathTooShort},valid={valid},maxProjectionOffset={maxProjectionOffset:F1}";
+        }
+    }
+
+
+    private void DiagnosticLog(object message, UnityEngine.Object context = null)
+    {
+        if (showDetailedDiagnostics)
+        {
+            Debug.Log(message, context != null ? context : this);
+        }
     }
 }
