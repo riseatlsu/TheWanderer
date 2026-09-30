@@ -17,18 +17,18 @@ RenderSettings:
   m_Fog: 0
   m_FogColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
   m_FogMode: 3
-  m_FogDensity: 0.01
+  m_FogDensity: 0.007
   m_LinearFogStart: 0
   m_LinearFogEnd: 300
-  m_AmbientSkyColor: {r: 0.212, g: 0.227, b: 0.259, a: 1}
-  m_AmbientEquatorColor: {r: 0.114, g: 0.125, b: 0.133, a: 1}
-  m_AmbientGroundColor: {r: 0.047, g: 0.043, b: 0.035, a: 1}
-  m_AmbientIntensity: 1
+  m_AmbientSkyColor: {r: 0, g: 0.3333335, b: 1, a: 1}
+  m_AmbientEquatorColor: {r: 1, g: 1, b: 1, a: 1}
+  m_AmbientGroundColor: {r: 0.2830189, g: 0.2830189, b: 0.2830189, a: 1}
+  m_AmbientIntensity: 0
   m_AmbientMode: 0
-  m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
+  m_SubtractiveShadowColor: {r: 0, g: 0.28571415, b: 1, a: 1}
   m_SkyboxMaterial: {fileID: 10304, guid: 0000000000000000f000000000000000, type: 0}
-  m_HaloStrength: 0.5
-  m_FlareStrength: 1
+  m_HaloStrength: 0.142
+  m_FlareStrength: 0.54
   m_FlareFadeSpeed: 3
   m_HaloTexture: {fileID: 0}
   m_SpotCookie: {fileID: 10001, guid: 0000000000000000e000000000000000, type: 0}
@@ -93,7 +93,7 @@ LightmapSettings:
     m_ExportTrainingData: 0
     m_TrainingDataDestination: TrainingData
     m_LightProbeSampleCountMultiplier: 4
-  m_LightingDataAsset: {fileID: 20201, guid: 0000000000000000f000000000000000, type: 0}
+  m_LightingDataAsset: {fileID: 112000000, guid: d0d901ac9d26caa4abf09b55e6d5c781, type: 2}
   m_LightingSettings: {fileID: 0}
 --- !u!196 &4
 NavMeshSettings:
@@ -179,7 +179,7 @@ Camera:
     height: 0.5
   near clip plane: 0.3
   far clip plane: 10000
-  field of view: 45
+  field of view: 65
   orthographic: 0
   orthographic size: 5
   m_Depth: 0
@@ -205,13 +205,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 330585543}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.12278779, y: 0.6963643, z: -0.12278779, w: -0.6963643}
-  m_LocalPosition: {x: 3255, y: 2274, z: 83}
+  m_LocalRotation: {x: -0.19546413, y: 0.67955405, z: -0.19546415, w: -0.67955416}
+  m_LocalPosition: {x: 3052, y: 3615, z: 83}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 675841787}
-  m_LocalEulerAnglesHint: {x: 20, y: 270, z: 0}
+  m_LocalEulerAnglesHint: {x: 32.094, y: 270, z: 0}
 --- !u!114 &330585547
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -235,7 +235,7 @@ MonoBehaviour:
     m_Bits: 1
   m_VolumeTrigger: {fileID: 0}
   m_VolumeFrameworkUpdateModeOption: 2
-  m_RenderPostProcessing: 1
+  m_RenderPostProcessing: 0
   m_Antialiasing: 0
   m_AntialiasingQuality: 2
   m_StopNaN: 0
@@ -870,7 +870,7 @@ Camera:
   m_ShutterSpeed: 0.005
   m_Aperture: 16
   m_FocusDistance: 10
-  m_FocalLength: 12
+  m_FocalLength: 31.261068
   m_BladeCount: 5
   m_Curvature: {x: 2, y: 11}
   m_BarrelClipping: 0.25
@@ -1035,7 +1035,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1599620442
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1137,7 +1137,6 @@ GameObject:
   - component: {fileID: 1677623903}
   - component: {fileID: 1677623902}
   - component: {fileID: 1677623901}
-  - component: {fileID: 1677623905}
   m_Layer: 2
   m_Name: Wanderer
   m_TagString: Untagged
@@ -1254,7 +1253,7 @@ NavMeshAgent:
   m_AngularSpeed: 500
   m_StoppingDistance: 50
   m_AutoTraverseOffMeshLink: 1
-  m_AutoBraking: 1
+  m_AutoBraking: 0
   m_AutoRepath: 1
   m_Height: 1
   m_BaseOffset: 0.5
@@ -1272,20 +1271,24 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 832e29b99a7f04948bb2f01ae9b399c3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WandererController
+  showDetailedDiagnostics: 0
   thoughtText: {fileID: 743368916}
   moodText: {fileID: 601431146}
   localRetryDelay: 5
+  longTermDecisionRetryDelay: 1
   enableLongTermGoals: 1
   miniDistance: 5
   maxAngleDeviation: 20
-  miniSpeed: 20
-  miniAcceleration: 50
+  miniSpeed: 100
+  miniAcceleration: 1000
   miniAngularSpeed: 180
-  miniStoppingDistance: 1
-  longTermGoalRadius: 20
+  miniStoppingDistance: 0.05
+  longTermGoalRadius: 10000
   maxMiniDistance: 200
+  reversalsBeforeRecovery: 2
+  oscillationEscapeDistance: 500
   reRequestDistanceFraction: 1
-  maxMiniSteps: 12
+  maxMiniSteps: 80
   maxLongTermSeconds: 300
 --- !u!114 &1677623902
 MonoBehaviour:
@@ -1299,14 +1302,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2bc67bccf50d6384a9dec22a08d284fe, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WandererMotor
+  showDetailedDiagnostics: 0
   startupSnapDistance: 100
   maximumMovementDistance: 3000
   absoluteMinimumMovement: 1
   destinationSampleRadius: 200
   minimumPreferredAlignment: 0.2
   directionalDistanceSamples: 10
+  continuityLookaheadSeconds: 10
   randomSearchAttempts: 64
-  miniModeDistanceThreshold: 10
+  miniModeDistanceThreshold: 200
+  miniModeMinimumAlignment: 0.05
   miniModeMaxFallbackDistance: 50
   miniModeMaxMiniDistance: 75
   miniModeDetourFactor: 1.2
@@ -1314,7 +1320,7 @@ MonoBehaviour:
   turnRadius: 5
   turnSamples: 12
   turnAngleThresholdDegrees: 20
-  minimumSpeed: 1
+  minimumSpeed: 100
   maximumSpeed: 500
   minimumAcceleration: 1
   maximumAcceleration: 1000
@@ -1328,7 +1334,7 @@ MonoBehaviour:
   pathAcquisitionGrace: 0.75
   arrivalTolerance: 0.5
   recoveryDestinationSeparation: 5
-  nextDecisionLeadTime: 3
+  nextDecisionLeadTime: 0.75
 --- !u!114 &1677623903
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1341,11 +1347,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a6db2c5041b992c46be813d2620108be, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WandererBrain
+  showDetailedDiagnostics: 0
   model: gpt-5.6-luna
   apiKeyOverride: 
-  printRawResponse: 1
-  minimumRequestedDistance: 1000
-  maximumRequestedDistance: 2500
+  printRawResponse: 0
+  decisionRequestTimeoutSeconds: 20
+  minimumRequestedDistance: 5000
+  maximumRequestedDistance: 10000
   minimumSpeed: 350
   maximumSpeed: 500
   minimumAcceleration: 350
@@ -1447,53 +1455,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 234fa4bfc72b09648bbbceaddebbbdde, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WandererPerception
-  scanDistance: 1000
+  scanDistance: 5000
   minimumProbeDistance: 10
   probeAttempts: 8
-  sampleRadius: 1000
+  sampleRadius: 500
   minimumDirectionAlignment: 0.25
---- !u!114 &1677623905
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1677623894}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2bc67bccf50d6384a9dec22a08d284fe, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::WandererMotor
-  startupSnapDistance: 25
-  maximumMovementDistance: 3000
-  absoluteMinimumMovement: 1
-  destinationSampleRadius: 200
-  minimumPreferredAlignment: 0.2
-  directionalDistanceSamples: 10
-  randomSearchAttempts: 64
-  miniModeDistanceThreshold: 10
-  miniModeMaxFallbackDistance: 50
-  miniModeMaxMiniDistance: 75
-  miniModeDetourFactor: 1.2
-  drawDebugGizmos: 1
-  turnRadius: 5
-  turnSamples: 12
-  turnAngleThresholdDegrees: 20
-  minimumSpeed: 1
-  maximumSpeed: 500
-  minimumAcceleration: 1
-  maximumAcceleration: 1000
-  minimumAngularSpeed: 30
-  maximumAngularSpeed: 720
-  maximumStoppingDistance: 50
-  stallTimeout: 4
-  stallPositionEpsilon: 0.1
-  minimumMovementTimeout: 20
-  recoveryRetryDelay: 1
-  pathAcquisitionGrace: 0.75
-  arrivalTolerance: 0.5
-  recoveryDestinationSeparation: 5
-  nextDecisionLeadTime: 3
 --- !u!1 &1806895343
 GameObject:
   m_ObjectHideFlags: 0
@@ -1524,6 +1490,56 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 1562113225}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &2060136802
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2060136804}
+  - component: {fileID: 2060136803}
+  m_Layer: 0
+  m_Name: Light Probe Group
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!220 &2060136803
+LightProbeGroup:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2060136802}
+  m_Enabled: 1
+  m_SourcePositions:
+  - {x: 1, y: 1, z: 1}
+  - {x: 1, y: 1, z: -1}
+  - {x: 1, y: -1, z: 1}
+  - {x: 1, y: -1, z: -1}
+  - {x: -1, y: 1, z: 1}
+  - {x: -1, y: 1, z: -1}
+  - {x: -1, y: -1, z: 1}
+  - {x: -1, y: -1, z: -1}
+  m_Dering: 1
+--- !u!4 &2060136804
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2060136802}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -10156.029, y: 5781.814, z: 731.95935}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &2070912965
 GameObject:
@@ -1617,10 +1633,10 @@ MeshRenderer:
   m_SmallMeshCulling: 1
   m_ForceMeshLod: -1
   m_MeshLodSelectionBias: 0
-  m_RenderingLayerMask: 1
+  m_RenderingLayerMask: 3
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 94e6a817eaa7a9347aac88ac0503e7c1, type: 2}
+  - {fileID: 2100000, guid: eb13670818120114197a42911ffed9b5, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -1628,7 +1644,7 @@ MeshRenderer:
   m_ProbeAnchor: {fileID: 0}
   m_LightProbeVolumeOverride: {fileID: 0}
   m_ScaleInLightmap: 1
-  m_ReceiveGI: 1
+  m_ReceiveGI: 2
   m_PreserveUVs: 0
   m_IgnoreNormalsForChartDetection: 0
   m_ImportantGI: 0
@@ -1766,3 +1782,4 @@ SceneRoots:
   - {fileID: 1562113225}
   - {fileID: 1599620445}
   - {fileID: 1590778556}
+  - {fileID: 2060136804}

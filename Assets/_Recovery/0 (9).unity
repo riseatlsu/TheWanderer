@@ -350,7 +350,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -1679, y: -900}
+  m_AnchoredPosition: {x: -1679, y: -251}
   m_SizeDelta: {x: 200, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &601431146
@@ -373,7 +373,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: 
+  m_text: Loading mood...
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -520,7 +520,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -1679, y: -1050}
+  m_AnchoredPosition: {x: -1679, y: -401}
   m_SizeDelta: {x: 200, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &743368916
@@ -543,7 +543,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: 
+  m_text: Loading thoughts...
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -1137,6 +1137,7 @@ GameObject:
   - component: {fileID: 1677623903}
   - component: {fileID: 1677623902}
   - component: {fileID: 1677623901}
+  - component: {fileID: 1677623905}
   m_Layer: 2
   m_Name: Wanderer
   m_TagString: Untagged
@@ -1253,7 +1254,7 @@ NavMeshAgent:
   m_AngularSpeed: 500
   m_StoppingDistance: 50
   m_AutoTraverseOffMeshLink: 1
-  m_AutoBraking: 0
+  m_AutoBraking: 1
   m_AutoRepath: 1
   m_Height: 1
   m_BaseOffset: 0.5
@@ -1277,14 +1278,14 @@ MonoBehaviour:
   enableLongTermGoals: 1
   miniDistance: 5
   maxAngleDeviation: 20
-  miniSpeed: 100
-  miniAcceleration: 1000
+  miniSpeed: 200
+  miniAcceleration: 50
   miniAngularSpeed: 180
-  miniStoppingDistance: 0.05
-  longTermGoalRadius: 10000
+  miniStoppingDistance: 1
+  longTermGoalRadius: 20
   maxMiniDistance: 200
   reRequestDistanceFraction: 1
-  maxMiniSteps: 80
+  maxMiniSteps: 12
   maxLongTermSeconds: 300
 --- !u!114 &1677623902
 MonoBehaviour:
@@ -1305,9 +1306,11 @@ MonoBehaviour:
   minimumPreferredAlignment: 0.2
   directionalDistanceSamples: 10
   randomSearchAttempts: 64
-  miniModeDistanceThreshold: 200
+  miniModeDistanceThreshold: 10
   miniModeMaxFallbackDistance: 50
-  miniModeMaxMiniDistance: 200
+  miniModeMaxMiniDistance: 75
+  miniModeDetourFactor: 1.2
+  drawDebugGizmos: 1
   turnRadius: 5
   turnSamples: 12
   turnAngleThresholdDegrees: 20
@@ -1325,7 +1328,7 @@ MonoBehaviour:
   pathAcquisitionGrace: 0.75
   arrivalTolerance: 0.5
   recoveryDestinationSeparation: 5
-  nextDecisionLeadTime: 0.75
+  nextDecisionLeadTime: 3
 --- !u!114 &1677623903
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1339,10 +1342,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WandererBrain
   model: gpt-5.6-luna
-  apiKeyOverride: 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
-  printRawResponse: 0
-  minimumRequestedDistance: 5000
-  maximumRequestedDistance: 10000
+  apiKeyOverride: 
+  printRawResponse: 1
+  minimumRequestedDistance: 1000
+  maximumRequestedDistance: 2500
   minimumSpeed: 350
   maximumSpeed: 500
   minimumAcceleration: 350
@@ -1350,8 +1353,8 @@ MonoBehaviour:
   minimumAngularSpeed: 350
   maximumAngularSpeed: 500
   minimumStoppingDistance: 1
-  maximumStoppingDistance: 2
-  maximumWaitSeconds: 1
+  maximumStoppingDistance: 20
+  maximumWaitSeconds: 30
   personalityPrompt: 'You are Wanderer, a small autonomous sphere experiencing the
     surface of Mars for the first time.
 
@@ -1444,11 +1447,53 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 234fa4bfc72b09648bbbceaddebbbdde, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WandererPerception
-  scanDistance: 5000
+  scanDistance: 1000
   minimumProbeDistance: 10
   probeAttempts: 8
-  sampleRadius: 500
+  sampleRadius: 1000
   minimumDirectionAlignment: 0.25
+--- !u!114 &1677623905
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1677623894}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2bc67bccf50d6384a9dec22a08d284fe, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WandererMotor
+  startupSnapDistance: 25
+  maximumMovementDistance: 3000
+  absoluteMinimumMovement: 1
+  destinationSampleRadius: 200
+  minimumPreferredAlignment: 0.2
+  directionalDistanceSamples: 10
+  randomSearchAttempts: 64
+  miniModeDistanceThreshold: 10
+  miniModeMaxFallbackDistance: 50
+  miniModeMaxMiniDistance: 75
+  miniModeDetourFactor: 1.2
+  drawDebugGizmos: 1
+  turnRadius: 5
+  turnSamples: 12
+  turnAngleThresholdDegrees: 20
+  minimumSpeed: 1
+  maximumSpeed: 500
+  minimumAcceleration: 1
+  maximumAcceleration: 1000
+  minimumAngularSpeed: 30
+  maximumAngularSpeed: 720
+  maximumStoppingDistance: 50
+  stallTimeout: 4
+  stallPositionEpsilon: 0.1
+  minimumMovementTimeout: 20
+  recoveryRetryDelay: 1
+  pathAcquisitionGrace: 0.75
+  arrivalTolerance: 0.5
+  recoveryDestinationSeparation: 5
+  nextDecisionLeadTime: 3
 --- !u!1 &1806895343
 GameObject:
   m_ObjectHideFlags: 0

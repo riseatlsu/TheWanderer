@@ -20,6 +20,9 @@ using UnityEngine;
 [RequireComponent(typeof(WandererBrain))]
 public class WandererController : MonoBehaviour
 {
+    [SerializeField, Tooltip("Enable detailed navigation diagnostics in the Console.")]
+    private bool showDetailedDiagnostics;
+
     [Header("Expression")]
 
     [SerializeField]
@@ -37,6 +40,9 @@ public class WandererController : MonoBehaviour
     [Tooltip("Delay between local movement retries if no destination is immediately realizable.")]
     private float localRetryDelay = 1f;
 
+    [SerializeField, Min(0.1f)]
+    [Tooltip("Delay before retrying a long-term decision after a failed or timed-out request.")]
+    private float longTermDecisionRetryDelay = 1f;
 
     private WandererPerception perception;
     private WandererMotor motor;
@@ -44,7 +50,12 @@ public class WandererController : MonoBehaviour
 
     private bool decisionInProgress;
     private Coroutine localRetryRoutine;
+    private Coroutine longTermRetryRoutine;
+    private Coroutine activeBrainRequestRoutine;
     private WandererDecision lastDecision;
+    private int consecutiveReversals;
+    private bool oscillationEscapeActive;
+    private int oscillationEscapeSide;
 
     private WandererDecision pendingDecision;
 
@@ -85,6 +96,15 @@ public class WandererController : MonoBehaviour
     [Tooltip("Maximum mini-step distance (meters) regardless of long-term distance/ratio.")]
     private float maxMiniDistance = 200f;
 
+    [Header("Oscillation Recovery")]
+    [SerializeField, Min(2)]
+    [Tooltip("Consecutive near-reversals that trigger a movement-history reset and escape route.")]
+    private int reversalsBeforeRecovery = 2;
+
+    [SerializeField, Min(10f)]
+    [Tooltip("Straight-line distance for the escape waypoint selected after an oscillation is detected.")]
+    private float oscillationEscapeDistance = 500f;
+
     [Header("Long-Term Re-request Rules")]
     [SerializeField, Range(0f, 1f)]
     [Tooltip("Fraction of the long-term distance after which a new long-term goal is requested (1.0 = full distance).")]
@@ -101,16 +121,28 @@ public class WandererController : MonoBehaviour
     // Runtime counters for long-term re-request policies
     private int miniStepsSinceLongTerm = 0;
     private float longTermStartTime = 0f;
-    // When a re-request is triggered but a pending mini exists, queue the re-request.
-    private bool reRequestQueued = false;
-
     // Runtime long-term goal state
     private bool hasLongTermGoal = false;
     private float longTermHeadingDegrees = 0f;
+    private bool hasFallbackLongTermGoal;
+    private float fallbackLongTermHeadingDegrees;
+    private float fallbackLongTermDistance;
     private string longTermMood = "curious";
     // Runtime long-term distance (meters) and accumulated forward progress toward the long-term heading.
     private float longTermDistance = 0f;
     private float accumulatedForwardProgress = 0f;
+    private Vector3 lastLongTermProgressPosition;
+    private bool hasLongTermProgressPosition;
+    private int longTermRequestSequence;
+    private int activeLongTermRequestId;
+    private float activeLongTermRequestStartedAt;
+    private Vector3 longTermOriginPosition;
+    private readonly Vector3[] recentArrivalPositions = new Vector3[16];
+    private int arrivalHistoryCount;
+    private int arrivalHistoryNext;
+    private Vector3 lastArrivalPosition;
+    private bool hasLastArrivalPosition;
+    private Vector3 lastArrivalDisplacement;
 
 
     private void Awake()
@@ -123,6 +155,19 @@ public class WandererController : MonoBehaviour
 
         brain =
             GetComponent<WandererBrain>();
+
+        WandererMotor[] attachedMotors = GetComponents<WandererMotor>();
+        DiagnosticLog(
+            $"[WANDERER_DIAG][CONTROLLER_SETUP] object={name} controllerId={GetInstanceID()} selectedMotorId={(motor != null ? motor.GetInstanceID() : 0)} attachedMotorCount={attachedMotors.Length} brainId={(brain != null ? brain.GetInstanceID() : 0)} perceptionId={(perception != null ? perception.GetInstanceID() : 0)}",
+            this
+        );
+        if (attachedMotors.Length != 1)
+        {
+            Debug.LogError(
+                $"[WANDERER_DIAG][MOTOR_COUNT] object={name} expected=1 actual={attachedMotors.Length}; controller uses the first GetComponent<WandererMotor>() result.",
+                this
+            );
+        }
 
         motor.MovementCompleted +=
             HandleMovementCompleted;
@@ -168,10 +213,6 @@ public class WandererController : MonoBehaviour
 
     private void RequestNextDecision()
     {
-        string motorBusyStr = motor != null ? motor.IsBusy.ToString() : "null";
-        string pendingStr = (pendingDecision != null).ToString();
-        Debug.Log($"RequestNextDecision called: enabled={enabled}, decisionInProgress={decisionInProgress}, motor.IsBusy={motorBusyStr}, hasLongTermGoal={hasLongTermGoal}, pendingDecision={pendingStr}", this); // no-op patch
-
         if (!enabled ||
             decisionInProgress ||
             motor.IsBusy)
@@ -187,16 +228,23 @@ public class WandererController : MonoBehaviour
             return;
         }
 
-        decisionInProgress = true;
+        if (enableLongTermGoals)
+        {
+            StartLongTermGoal();
+            return;
+        }
+
+        BeginRequestTracking("idle");
 
         WandererPerceptionSnapshot snapshot =
             perception.Scan();
 
-        StartCoroutine(
+        StartBrainRequest(
             brain.RequestDecision(
                 snapshot,
                 HandleDecision,
-                HandleDecisionFailure
+                HandleDecisionFailure,
+                activeLongTermRequestId
             )
         );
     }
@@ -209,23 +257,41 @@ public class WandererController : MonoBehaviour
             return;
         }
 
-        decisionInProgress = true;
+        if (enableLongTermGoals)
+        {
+            StartLongTermGoal(keepCurrentRoute: motor.IsBusy);
+            return;
+        }
+
+        BeginRequestTracking("while-moving");
 
         WandererPerceptionSnapshot snapshot =
             perception.Scan();
 
-        StartCoroutine(
+        StartBrainRequest(
             brain.RequestDecision(
                 snapshot,
                 HandleDecision,
-                HandleDecisionFailure
+                HandleDecisionFailure,
+                activeLongTermRequestId
             )
         );
     }
 
-    private void HandleDecision(
-        WandererDecision decision)
+    private void HandleDecision(WandererDecision decision)
     {
+        HandleDecision(decision, false);
+    }
+
+    private void HandleDecision(
+        WandererDecision decision,
+        bool redirectActiveMovement)
+    {
+        activeBrainRequestRoutine = null;
+        DiagnosticLog(
+            $"[WANDERER_DIAG][DECISION_RECEIVED] requestId={activeLongTermRequestId} requestAge={(decisionInProgress ? Time.time - activeLongTermRequestStartedAt : 0f):F2} redirect={redirectActiveMovement} busy={motor.IsBusy} pendingBefore={(pendingDecision != null)} hasGoal={hasLongTermGoal} position={motor.Agent.nextPosition} velocity={motor.Agent.velocity} decision={(decision == null ? "null" : $"heading={decision.headingDegrees:F1},direction={decision.direction},distance={decision.distance:F1},speed={decision.speed:F1},accel={decision.acceleration:F1},mood={decision.mood},thought={decision.thought}")}",
+            this
+        );
         decisionInProgress = false;
         lastDecision = decision;
 
@@ -236,59 +302,118 @@ public class WandererController : MonoBehaviour
             DisplayExpression(decision);
         }
 
-        string motorBusyStr2 = motor != null ? motor.IsBusy.ToString() : "null";
-        string pendingStr2 = (pendingDecision != null).ToString();
-        // Classify decision: long-term decisions come from the LLM and include mood/thought; minis do not.
+        // Long-term decisions come from the LLM and include mood/thought; minis do not.
         bool isLongTerm = !string.IsNullOrWhiteSpace(decision.mood) || !string.IsNullOrWhiteSpace(decision.thought);
 
         if (isLongTerm)
         {
-            Debug.Log($"LONG-TERM DECISION RECEIVED (LLM) -- headingDegrees={decision.headingDegrees}, direction={decision.direction}, distance={decision.distance} m, mood='{decision.mood}', thought='{decision.thought}'", this);
-            Debug.Log($"Explanation: LLM chose a broad goal toward {decision.direction ?? decision.headingDegrees.ToString()+"°"} for {decision.distance:F1} m. Minis will be approx {decision.distance/5f:F1} m (capped at {maxMiniDistance} m).", this);
+            Debug.Log($"[Wanderer] GOAL received direction={decision.direction} distance={decision.distance:F0}m mood={decision.mood} thought=\"{decision.thought}\"", this);
         }
         else
         {
-            Debug.Log($"MINI DECISION GENERATED (local) -- headingDegrees={decision.headingDegrees}, distance={decision.distance} m, speed={decision.speed}, accel={decision.acceleration}", this);
-            Debug.Log($"Explanation: Local mini-step toward {decision.headingDegrees:F1}° for {decision.distance:F2} m to nudge movement toward long-term heading.", this);
+            Debug.Log($"[Wanderer] MINI heading={decision.headingDegrees:F1}° goal={longTermHeadingDegrees:F1}° distance={decision.distance:F0}m speed={decision.speed:F0} accel={decision.acceleration:F0}", this);
         }
-
-        Debug.Log(
-            $"WANDERER DECISION\n" +
-            $"Direction: {decision.direction}\n" +
-            $"Distance: {decision.distance:F2} m\n" +
-            $"Speed: {decision.speed:F2} m/s\n" +
-            $"Acceleration: {decision.acceleration:F2} m/s²\n" +
-            $"Angular Speed: {decision.angularSpeed:F2} deg/s\n" +
-            $"Stopping Distance: {decision.stoppingDistance:F2} m\n" +
-            $"Wait: {decision.waitSeconds:F2} s\n" +
-            $"Mood: {decision.mood}\n" +
-            $"Thought: {decision.thought}",
-            this
-        );
 
         // If the Wanderer is already moving,
         // save this decision for the next movement.
         if (motor.IsBusy)
         {
+            if (redirectActiveMovement)
+            {
+                if (motor.TryMove(decision, true))
+                {
+                    pendingDecision = null;
+                    TrackMiniRouteQuality(isLongTerm, false);
+                }
+                else
+                {
+                    // Keep the existing valid route alive while a new direction is
+                    // requested; do not queue a blocked mini for another retry.
+                    TrackMiniRouteQuality(isLongTerm, true);
+                }
+                return;
+            }
+
             pendingDecision = decision;
             return;
         }
 
         // Otherwise, this is the first movement.
-        if (!motor.TryMove(decision))
+        if (motor.TryMove(decision))
         {
+            TrackMiniRouteQuality(isLongTerm, false);
+        }
+        else if (!isLongTerm &&
+                 hasLongTermGoal &&
+                 motor.TryMoveAnywhere(decision))
+        {
+            // Start a reachable route immediately using this mini's heading as
+            // the bias. This avoids an idle retry delay when the exact mini fails.
+            TrackMiniRouteQuality(isLongTerm, false);
+        }
+        else
+        {
+            if (!isLongTerm && hasLongTermGoal)
+            {
+                TrackMiniRouteQuality(isLongTerm, true);
+                if (decisionInProgress)
+                {
+                    return;
+                }
+            }
+
             StartLocalRetryLoop();
         }
+    }
+
+    private void TrackMiniRouteQuality(bool isLongTerm, bool routeFailed)
+    {
+        if (isLongTerm || !hasLongTermGoal)
+        {
+            return;
+        }
+
+        float goalAlignment = motor.GetActiveMovementAlignment(longTermHeadingDegrees);
+        Vector3 goalVector = HeadingVector(longTermHeadingDegrees);
+        float velocityAlignment = motor.Agent.velocity.sqrMagnitude > 0.01f
+            ? Vector3.Dot(motor.Agent.velocity.normalized, goalVector)
+            : float.NaN;
+        float steeringAlignment = motor.Agent.desiredVelocity.sqrMagnitude > 0.01f
+            ? Vector3.Dot(motor.Agent.desiredVelocity.normalized, goalVector)
+            : float.NaN;
+        DiagnosticLog(
+            $"[WANDERER_DIAG][ROUTE_QUALITY] failed={routeFailed} goal={longTermHeadingDegrees:F1} threshold=0.50 candidateAlignment={goalAlignment:F2} velocityAlignment={velocityAlignment:F2} steeringAlignment={steeringAlignment:F2} candidate={motor.Agent.destination} directToCandidate={motor.Agent.destination - motor.Agent.nextPosition} velocity={motor.Agent.velocity} desired={motor.Agent.desiredVelocity} route={motor.Agent.pathStatus} busy={motor.IsBusy} miniCount={miniStepsSinceLongTerm} progress={accumulatedForwardProgress:F1}/{longTermDistance:F1}",
+            this
+        );
+        if (!routeFailed && goalAlignment >= 0.5f)
+        {
+            return;
+        }
+
+        string reason = routeFailed
+            ? "mini-route-unavailable"
+            : $"route-away-from-goal alignment={goalAlignment:F2}";
+        DiagnosticLog(
+            $"[WANDERER_DIAG][GOAL_REFRESH] reason={reason} oldGoal={longTermHeadingDegrees:F1} oldDistance={longTermDistance:F1} minis={miniStepsSinceLongTerm} progress={accumulatedForwardProgress:F1} goalAge={Time.time - longTermStartTime:F1} busy={motor.IsBusy} target={motor.Agent.destination} position={motor.Agent.nextPosition} velocity={motor.Agent.velocity}",
+            this
+        );
+
+        hasLongTermGoal = false;
+        accumulatedForwardProgress = 0f;
+        miniStepsSinceLongTerm = 0;
+        longTermStartTime = 0f;
+        hasLongTermProgressPosition = false;
+        StartLongTermGoal(keepCurrentRoute: true);
     }
 
     private void HandleDecisionFailure(
         string error)
     {
+        activeBrainRequestRoutine = null;
         decisionInProgress = false;
 
         Debug.LogWarning(
-            $"WANDERER BRAIN UNAVAILABLE\n{error}\n" +
-            "Using local movement until the next physical arrival.",
+            $"[Wanderer] Goal request failed; continuing with local movement. {error}",
             this
         );
 
@@ -297,117 +422,136 @@ public class WandererController : MonoBehaviour
 
         DisplayExpression(lastDecision);
 
-        if (!motor.TryMoveAnywhere(lastDecision))
+        if (!motor.TryMove(lastDecision) &&
+            !motor.TryMoveAnywhere(lastDecision))
         {
             StartLocalRetryLoop();
+        }
+    }
+
+    private void HandleLongTermDecisionFailure(string error)
+    {
+        activeBrainRequestRoutine = null;
+        decisionInProgress = false;
+        Debug.LogWarning(
+            $"[Wanderer] Long-term goal request failed; continuing toward {(hasFallbackLongTermGoal ? $"the previous heading {fallbackLongTermHeadingDegrees:F0}°" : "a local fallback")}. {error}",
+            this
+        );
+
+        // Preserve a valid route on request failure. If it completed, continue
+        // using small moves biased toward the last accepted long-term heading.
+        if (!motor.IsBusy)
+        {
+            if (hasFallbackLongTermGoal)
+            {
+                if (!TryStartPendingMini(false)) StartLocalRetryLoop();
+            }
+            else if (!motor.TryMoveContinuously(lastDecision) &&
+                     !motor.TryMoveAnywhere(lastDecision))
+            {
+                StartLocalRetryLoop();
+            }
+        }
+
+        if (!enableLongTermGoals || longTermRetryRoutine != null)
+        {
+            return;
+        }
+
+        longTermRetryRoutine = StartCoroutine(RetryLongTermGoalAfterFailure());
+    }
+
+    private IEnumerator RetryLongTermGoalAfterFailure()
+    {
+        yield return new WaitForSecondsRealtime(longTermDecisionRetryDelay);
+        longTermRetryRoutine = null;
+
+        if (enabled && enableLongTermGoals && !decisionInProgress)
+        {
+            Debug.Log(
+                "[Wanderer] Requesting a new long-term goal after the previous request failed.",
+                this
+            );
+            StartLongTermGoal(keepCurrentRoute: motor.IsBusy);
         }
     }
 
     private void HandleMovementCompleted(
         WandererMovementResult result)
     {
+        Vector3 position = motor.Agent.nextPosition;
+        Vector3 arrivalDelta = hasLastArrivalPosition
+            ? position - lastArrivalPosition
+            : Vector3.zero;
+        arrivalDelta.y = 0f;
+        Vector3 goalNet = position - longTermOriginPosition;
+        goalNet.y = 0f;
+        float headingProgress = hasLongTermGoal
+            ? Vector3.Dot(arrivalDelta, HeadingVector(longTermHeadingDegrees))
+            : 0f;
+        int revisits = RecordArrival(position);
+        float reversal = lastArrivalDisplacement.sqrMagnitude > 0.001f && arrivalDelta.sqrMagnitude > 0.001f
+            ? Vector3.Dot(lastArrivalDisplacement.normalized, arrivalDelta.normalized)
+            : 1f;
+        DiagnosticLog(
+            $"[WANDERER_DIAG][ARRIVAL_STATE] position={position} delta={arrivalDelta} revisitsIn16={revisits} reversalDot={reversal:F2} goalActive={hasLongTermGoal} goal={longTermHeadingDegrees:F1} goalOrigin={longTermOriginPosition} goalNet={goalNet.magnitude:F1} goalNetVector={goalNet} stepHeadingProgress={headingProgress:F1} accumulatedForward={accumulatedForwardProgress:F1}/{longTermDistance:F1} miniCount={miniStepsSinceLongTerm} result={result.desiredDirection}->{result.realizedDirection} fallback='{result.fallbackStage}' requestPending={decisionInProgress} requestId={activeLongTermRequestId} pendingDecision={(pendingDecision != null)}",
+            this
+        );
+        if (revisits > 0 || reversal < -0.5f)
+        {
+            DiagnosticLog(
+                $"[WANDERER_DIAG][POSSIBLE_CYCLE] position={position} recentRevisits={revisits} reversalDot={reversal:F2} recentPositions={FormatRecentArrivalPositions()}",
+                this
+            );
+        }
+        if (arrivalDelta.sqrMagnitude > 0.001f)
+        {
+            lastArrivalDisplacement = arrivalDelta;
+        }
+        lastArrivalPosition = position;
+        hasLastArrivalPosition = true;
+
+        if (oscillationEscapeActive)
+        {
+            consecutiveReversals = 0;
+            if (!decisionInProgress)
+            {
+                oscillationEscapeActive = false;
+                Debug.Log(
+                    $"[Wanderer] Recovery complete at {position:F1}; resuming navigation.",
+                    this
+                );
+            }
+        }
+        else if (reversal < -0.75f)
+        {
+            consecutiveReversals++;
+        }
+        else
+        {
+            consecutiveReversals = 0;
+        }
+
+        if (!oscillationEscapeActive &&
+            consecutiveReversals >= Mathf.Max(2, reversalsBeforeRecovery))
+        {
+            BeginOscillationRecovery(position, arrivalDelta);
+            return;
+        }
+
         brain.RememberMovement(result);
 
-        string motorBusyStr3 = motor != null ? motor.IsBusy.ToString() : "null";
-        string pendingStr3 = (pendingDecision != null).ToString();
-        string lastDecisionDistStr = lastDecision != null ? lastDecision.distance.ToString() : "null";
-        if (Debug.isDebugBuild)
-        {
-            Debug.Log($"HANDLE MOVEMENT COMPLETED: hasLongTermGoal={hasLongTermGoal}, decisionInProgress={decisionInProgress}, motor.IsBusy={motorBusyStr3}, pendingDecision={pendingStr3}, lastDecisionDistance={lastDecisionDistStr}, longTermDistance={longTermDistance}, accumulatedForwardProgress={accumulatedForwardProgress}", this);
-        }
-
         // If following a long-term heading, accumulate forward progress toward it.
-        if (hasLongTermGoal && longTermGoalRadius > 0f)
-        {
-            // Try to parse the realized direction into a heading degrees.
-            if (WandererDirectionExtensions.TryParse(result.realizedDirection, out WandererDirection realizedDir))
-            {
-                float realizedHeading = realizedDir.ToHeadingDegrees();
-
-                float delta = Mathf.DeltaAngle(longTermHeadingDegrees, realizedHeading);
-                float forward = Mathf.Cos(delta * Mathf.Deg2Rad) * result.actualDistance;
-
-                if (forward > 0f)
-                {
-                    accumulatedForwardProgress += forward;
-                }
-
-                // If we've progressed far enough toward the long-term heading, request a new long-term goal.
-                // But do not preempt any pendingDecision that is already waiting to run.
-                // Evaluate combined re-request policies: distance fraction, mini-step count, short goal radius, or time.
-                bool reachedDistanceFraction = false;
-
-                if (longTermDistance > 0f && reRequestDistanceFraction > 0f)
-                {
-                    reachedDistanceFraction = accumulatedForwardProgress >= (longTermDistance * reRequestDistanceFraction);
-                }
-
-                bool reachedMiniCount = maxMiniSteps > 0 && miniStepsSinceLongTerm >= maxMiniSteps;
-
-                bool reachedMaxTime = maxLongTermSeconds > 0f && (Time.time - longTermStartTime) >= maxLongTermSeconds;
-
-                bool reachedGoalRadius = longTermGoalRadius > 0f && accumulatedForwardProgress >= longTermGoalRadius;
-                if (reachedDistanceFraction || reachedMiniCount || reachedMaxTime || reachedGoalRadius)
-                {
-                    string reason = reachedDistanceFraction ? "distance-fraction" : (reachedMiniCount ? "mini-count" : (reachedMaxTime ? "time" : "goal-radius"));
-                    Debug.Log($"Long-term re-request triggered by {reason}: progress={accumulatedForwardProgress:F1}, minis={miniStepsSinceLongTerm}, elapsed={(Time.time - longTermStartTime):F1}s", this);
-
-                    if (pendingDecision != null)
-                    {
-                        // Defer the LLM request until the pending mini is consumed to avoid interrupting queued local movement.
-                        reRequestQueued = true;
-                        Debug.Log($"Long-term re-request queued because a pending mini exists.", this);
-                    }
-                    else
-                    {
-                        hasLongTermGoal = false;
-                        accumulatedForwardProgress = 0f;
-                        miniStepsSinceLongTerm = 0;
-                        longTermStartTime = 0f;
-                        StartLongTermGoal();
-                        // Let the new long-term goal drive the next movement; do not fall back to local reuse.
-                        return;
-                    }
-                }
-            }
-        }
-
-        // If a long-term goal is active, immediately generate and try the next mini-decision.
         if (hasLongTermGoal)
         {
-            WandererDecision nextMini = GenerateMiniDecision();
-
-            // If Wanderer is not busy, attempt to start the mini movement now.
-            if (!motor.IsBusy)
-            {
-                if (!motor.TryMove(nextMini))
-                {
-                    // Could not start the mini movement; start local retry loop.
-                    StartLocalRetryLoop();
-                }
-
-                return;
-            }
-            else
-            {
-                // If motor is busy, queue the mini decision for when movement completes.
-                pendingDecision = nextMini;
-                return;
-            }
-        }
-
-        // If a re-request was queued earlier (because a pending mini existed), and now there is no pending mini
-        // and no decision in progress, trigger the long-term request.
-        if (reRequestQueued && !decisionInProgress && pendingDecision == null)
-        {
-            reRequestQueued = false;
-            hasLongTermGoal = false;
-            accumulatedForwardProgress = 0f;
-            miniStepsSinceLongTerm = 0;
-            longTermStartTime = 0f;
-            Debug.Log("Processing queued long-term re-request now that pending mini is cleared.", this);
-            StartLongTermGoal();
-            return;
+            AccumulateForwardProgress();
+            Vector3 goalNetAfterStep = motor.Agent.nextPosition - longTermOriginPosition;
+            goalNetAfterStep.y = 0f;
+            DiagnosticLog(
+                $"[WANDERER_DIAG][PROGRESS_AFTER_ARRIVAL] goal={longTermHeadingDegrees:F1} netDistance={goalNetAfterStep.magnitude:F1} netVector={goalNetAfterStep} positiveForwardAccumulator={accumulatedForwardProgress:F1} goalDistance={longTermDistance:F1} miniCount={miniStepsSinceLongTerm}",
+                this
+            );
+            if (TryRequestNextLongTermGoal()) return;
         }
 
         if (localRetryRoutine != null)
@@ -416,8 +560,9 @@ public class WandererController : MonoBehaviour
             localRetryRoutine = null;
         }
 
-        // Best case:
-        // the next LLM decision is already waiting.
+        // Consume a mini that was generated by the motor's look-ahead event. This
+        // must come before the active long-term-goal branch, or that branch would
+        // keep generating new minis and leave pendingDecision stuck forever.
         if (pendingDecision != null)
         {
             WandererDecision nextDecision =
@@ -427,27 +572,48 @@ public class WandererController : MonoBehaviour
 
             if (!motor.TryMove(nextDecision))
             {
-                StartLocalRetryLoop();
+                if (!motor.TryMoveAnywhere(nextDecision))
+                {
+                    StartLocalRetryLoop();
+                }
             }
 
             return;
         }
 
-        // The LLM hasn't answered yet.
-        // DO NOT let Wanderer freeze.
-        //
-        // Use the previous decision as a temporary local movement.
-        if (!motor.TryMoveAnywhere(lastDecision))
+        // No mini is queued, so continue the active long-term goal locally.
+        if (hasLongTermGoal)
+        {
+            WandererDecision nextMini = GenerateMiniDecision();
+            HandleDecision(nextMini, true);
+            return;
+        }
+
+        if (!decisionInProgress && hasFallbackLongTermGoal)
+        {
+            if (!TryStartPendingMini(false)) StartLocalRetryLoop();
+            return;
+        }
+
+        // Keep the current travel direction while the replacement goal is in flight.
+        // Replaying lastDecision here can repeatedly select opposing fallback routes.
+        if (decisionInProgress)
+        {
+            ContinueMovementWhileWaiting();
+            return;
+        }
+
+        if (!motor.TryMove(lastDecision) && !motor.TryMoveAnywhere(lastDecision))
         {
             StartLocalRetryLoop();
         }
     }
     private void HandleNextDecisionRequest()
     {
-        string motorBusyStr4 = motor != null ? motor.IsBusy.ToString() : "null";
-        string pendingStr4 = (pendingDecision != null).ToString();
-        Debug.Log($"HandleNextDecisionRequest event: enabled={enabled}, decisionInProgress={decisionInProgress}, motor.IsBusy={motorBusyStr4}, hasLongTermGoal={hasLongTermGoal}, pendingDecision={pendingStr4}", this);
-
+        DiagnosticLog(
+            $"[WANDERER_DIAG][NEXT_DECISION_EVENT] enabled={enabled} requestInProgress={decisionInProgress} busy={motor.IsBusy} goalActive={hasLongTermGoal} pending={(pendingDecision != null)} requestId={activeLongTermRequestId} position={motor.Agent.nextPosition} destination={motor.Agent.destination} remaining={(motor.Agent.hasPath ? motor.Agent.remainingDistance : -1f):F1} velocity={motor.Agent.velocity}",
+            this
+        );
         if (!enabled ||
             decisionInProgress ||
             pendingDecision != null)
@@ -458,21 +624,36 @@ public class WandererController : MonoBehaviour
         // If a long-term goal is active, generate a local mini-decision instead of calling the LLM.
         if (hasLongTermGoal)
         {
+            AccumulateForwardProgress();
+            if (TryRequestNextLongTermGoal())
+            {
+                return;
+            }
+
             WandererDecision mini = GenerateMiniDecision();
-            HandleDecision(mini);
+            HandleDecision(mini, true);
             return;
         }
 
-        decisionInProgress = true;
+        // In long-term mode every LLM response must establish a goal and its
+        // mini-movement sequence through OnLongTermDecision.
+        if (enableLongTermGoals)
+        {
+            StartLongTermGoal(keepCurrentRoute: motor.IsBusy);
+            return;
+        }
+
+        BeginRequestTracking("lookahead");
 
         WandererPerceptionSnapshot snapshot =
             perception.Scan();
 
-        StartCoroutine(
+        StartBrainRequest(
             brain.RequestDecision(
                 snapshot,
                 HandleDecision,
-                HandleDecisionFailure
+                HandleDecisionFailure,
+                activeLongTermRequestId
             )
         );
     }
@@ -481,35 +662,176 @@ public class WandererController : MonoBehaviour
     /// Asks the LLM once for a long-term goal (coarse heading and mood),
     /// then begins generating local mini-decisions toward that heading.
     /// </summary>
-    private void StartLongTermGoal()
+    private void StartLongTermGoal(bool keepCurrentRoute = false)
     {
-        Debug.Log($"StartLongTermGoal requested: enabled={enabled}, decisionInProgress={decisionInProgress}", this);
         if (!enabled || decisionInProgress)
         {
             return;
         }
 
-        decisionInProgress = true;
+        BeginRequestTracking(keepCurrentRoute ? "route-refresh" : "long-term-start");
+
+        DiagnosticLog(
+            $"[WANDERER_DIAG][GOAL_REQUEST_START] requestId={activeLongTermRequestId} keepRoute={keepCurrentRoute} hasGoal={hasLongTermGoal} priorGoal={longTermHeadingDegrees:F1} position={motor.Agent.nextPosition} busy={motor.IsBusy} path={motor.Agent.hasPath} pendingPath={motor.Agent.pathPending} velocity={motor.Agent.velocity} previousDecision={(lastDecision == null ? "none" : $"{lastDecision.direction}/{lastDecision.headingDegrees:F1}°/{lastDecision.distance:F1}m")}",
+            this
+        );
 
         WandererPerceptionSnapshot snapshot = perception.Scan();
 
-        StartCoroutine(
+        StartBrainRequest(
             brain.RequestDecision(
                 snapshot,
                 OnLongTermDecision,
-                HandleDecisionFailure
+                HandleLongTermDecisionFailure,
+                activeLongTermRequestId
             )
         );
+
+        // A request can outlast the current mini-route. Extend the active heading
+        // with a longer route while waiting, except during the dedicated escape
+        // waypoint, which must remain straight until it is reached.
+        if (!oscillationEscapeActive)
+        {
+            ContinueMovementWhileWaiting();
+        }
+    }
+
+    private void BeginRequestTracking(string source)
+    {
+        decisionInProgress = true;
+        activeLongTermRequestId = ++longTermRequestSequence;
+        activeLongTermRequestStartedAt = Time.time;
+        DiagnosticLog(
+            $"[WANDERER_DIAG][REQUEST_BEGIN] requestId={activeLongTermRequestId} source={source} position={motor.Agent.nextPosition} busy={motor.IsBusy} goalActive={hasLongTermGoal} pending={(pendingDecision != null)} target={motor.Agent.destination}",
+            this
+        );
+    }
+
+    private void ContinueMovementWhileWaiting()
+    {
+        if (motor == null)
+        {
+            return;
+        }
+
+        if (decisionInProgress)
+        {
+            if (hasFallbackLongTermGoal && !oscillationEscapeActive)
+            {
+                TryStartPendingMini(motor.IsBusy);
+                return;
+            }
+
+            bool continued = motor.TryMoveContinuously(lastDecision);
+            if (!continued)
+            {
+                continued = motor.TryMoveAnywhere(lastDecision, replaceActiveMovement: motor.IsBusy);
+            }
+            if (!continued && !motor.IsBusy)
+            {
+                StartLocalRetryLoop();
+            }
+            return;
+        }
+
+        // Reuse the last exact heading when possible. Mini decisions have no
+        // compass direction string, so TryMoveAnywhere would choose a random one.
+        bool wasBusy = motor.IsBusy;
+        if (wasBusy)
+        {
+            if (!motor.TryMove(lastDecision, true))
+            {
+                Debug.LogWarning("[Wanderer] Could not extend the current route while waiting for a goal.", this);
+            }
+            return;
+        }
+
+        if (!motor.TryMove(lastDecision) && !motor.TryMoveAnywhere(lastDecision))
+        {
+            StartLocalRetryLoop();
+        }
+    }
+
+    private void AccumulateForwardProgress()
+    {
+        if (motor == null || motor.Agent == null || !motor.Agent.isOnNavMesh)
+        {
+            return;
+        }
+
+        Vector3 current = motor.Agent.nextPosition;
+        if (hasLongTermProgressPosition)
+        {
+            Vector3 displacement = current - lastLongTermProgressPosition;
+            displacement.y = 0f;
+            float radians = longTermHeadingDegrees * Mathf.Deg2Rad;
+            Vector3 goalDirection = new Vector3(Mathf.Sin(radians), 0f, Mathf.Cos(radians));
+            float forward = Vector3.Dot(displacement, goalDirection);
+            if (forward > 0f)
+            {
+                accumulatedForwardProgress += forward;
+            }
+
+            Vector3 net = current - longTermOriginPosition;
+            net.y = 0f;
+            DiagnosticLog(
+                $"[WANDERER_DIAG][PROGRESS_ACCOUNTING] displacement={displacement} signedForward={forward:F1} accumulatedPositive={accumulatedForwardProgress:F1} goalNet={net.magnitude:F1} netVector={net} goal={longTermHeadingDegrees:F1}",
+                this
+            );
+        }
+
+        lastLongTermProgressPosition = current;
+        hasLongTermProgressPosition = true;
+    }
+
+    private bool TryRequestNextLongTermGoal()
+    {
+        bool reachedDistanceFraction = longTermDistance > 0f &&
+            reRequestDistanceFraction > 0f &&
+            accumulatedForwardProgress >= longTermDistance * reRequestDistanceFraction;
+        bool reachedMiniCount = maxMiniSteps > 0 && miniStepsSinceLongTerm >= maxMiniSteps;
+        bool reachedMaxTime = maxLongTermSeconds > 0f &&
+            Time.time - longTermStartTime >= maxLongTermSeconds;
+        bool reachedGoalRadius = longTermGoalRadius > 0f &&
+            accumulatedForwardProgress >= longTermGoalRadius;
+
+        DiagnosticLog(
+            $"[WANDERER_DIAG][GOAL_POLICY] goal={longTermHeadingDegrees:F1} distance={longTermDistance:F1} forwardProgress={accumulatedForwardProgress:F1} goalRadius={longTermGoalRadius:F1} distanceFraction={reRequestDistanceFraction:F2} miniCount={miniStepsSinceLongTerm}/{maxMiniSteps} goalAge={Time.time - longTermStartTime:F1}/{maxLongTermSeconds:F1} reachedDistance={reachedDistanceFraction} reachedRadius={reachedGoalRadius} reachedMiniCount={reachedMiniCount} reachedTime={reachedMaxTime}",
+            this
+        );
+
+        if (!reachedDistanceFraction && !reachedMiniCount && !reachedMaxTime && !reachedGoalRadius)
+        {
+            return false;
+        }
+
+        string reason = reachedDistanceFraction ? "distance" :
+            reachedMiniCount ? "mini-count" : reachedMaxTime ? "time" : "progress";
+        DiagnosticLog($"[WANDERER_DIAG][GOAL_REFRESH] reason={reason} progress={accumulatedForwardProgress:F0}/{longTermDistance:F0}m minis={miniStepsSinceLongTerm} goal={longTermHeadingDegrees:F1} position={motor.Agent.nextPosition} busy={motor.IsBusy}", this);
+
+        hasLongTermGoal = false;
+        accumulatedForwardProgress = 0f;
+        miniStepsSinceLongTerm = 0;
+        longTermStartTime = 0f;
+        hasLongTermProgressPosition = false;
+        StartLongTermGoal();
+        return true;
     }
 
     private void OnLongTermDecision(WandererDecision decision)
     {
+        activeBrainRequestRoutine = null;
+        float priorHeading = longTermHeadingDegrees;
+        DiagnosticLog(
+            $"[WANDERER_DIAG][GOAL_RESPONSE] requestId={activeLongTermRequestId} elapsed={Time.time - activeLongTermRequestStartedAt:F2} rawHeading={(decision != null ? decision.headingDegrees.ToString("F1") : "null")} rawDirection={decision?.direction} distance={(decision != null ? decision.distance.ToString("F1") : "null")} busy={motor.IsBusy} pendingDecision={(pendingDecision != null)} position={motor.Agent.nextPosition} target={motor.Agent.destination} velocity={motor.Agent.velocity} recentArrivals={FormatRecentArrivalPositions()}",
+            this
+        );
         // Mark that the LLM work is finished.
         decisionInProgress = false;
 
         if (decision == null)
         {
-            HandleDecisionFailure("Long-term decision was null.");
+            HandleLongTermDecisionFailure("Long-term decision was null.");
             return;
         }
 
@@ -534,9 +856,11 @@ public class WandererController : MonoBehaviour
 
         // Record the long-term distance if provided by the LLM decision.
         longTermDistance = decision.distance > 0f ? decision.distance : 0f;
+        hasFallbackLongTermGoal = true;
+        fallbackLongTermHeadingDegrees = longTermHeadingDegrees;
+        fallbackLongTermDistance = longTermDistance;
 
-        Debug.Log($"ON LONG-TERM DECISION: heading={longTermHeadingDegrees} deg, distance={longTermDistance} m, mood={longTermMood}", this);
-        Debug.Log($"Long-term explanation: The LLM suggested heading {longTermHeadingDegrees}° for {longTermDistance:F1} m. The controller will generate mini-steps that bias toward this heading and preserve the LLM mood/thought until the next LLM decision.", this);
+        DiagnosticLog($"[WANDERER_DIAG][GOAL_ACTIVE] requestId={activeLongTermRequestId} priorHeading={priorHeading:F1} newHeading={longTermHeadingDegrees:F1} turn={Mathf.DeltaAngle(priorHeading, longTermHeadingDegrees):F1} distance={longTermDistance:F1} mood={longTermMood} thought=\"{decision.thought}\" position={motor.Agent.nextPosition} busy={motor.IsBusy} currentTarget={motor.Agent.destination}", this);
 
         // Show the long-term mood/thought immediately (do not let minis overwrite it).
         DisplayExpression(decision);
@@ -545,10 +869,22 @@ public class WandererController : MonoBehaviour
         // Reset counters/timers for the new long-term decision so re-request policies start fresh.
         miniStepsSinceLongTerm = 0;
         longTermStartTime = Time.time;
+        lastLongTermProgressPosition = motor.Agent.nextPosition;
+        hasLongTermProgressPosition = true;
+        longTermOriginPosition = motor.Agent.nextPosition;
+
+        if (oscillationEscapeActive)
+        {
+            DiagnosticLog(
+                $"[WANDERER][OSCILLATION_ESCAPE_GOAL_READY] heading={longTermHeadingDegrees:F1} distance={longTermDistance:F1}; applying it when the escape waypoint is complete.",
+                this
+            );
+            return;
+        }
 
         // Immediately generate and start the first mini-decision toward the long-term heading.
         WandererDecision mini = GenerateMiniDecision();
-        HandleDecision(mini);
+        HandleDecision(mini, true);
     }
 
     private WandererDecision GenerateMiniDecision()
@@ -573,15 +909,14 @@ public class WandererController : MonoBehaviour
         // Clamp mini distance to a sensible range so minis remain usable but not tiny.
         useDistance = Mathf.Clamp(useDistance, Mathf.Max(0.01f, miniDistance), maxMiniDistance);
 
-        if (Debug.isDebugBuild)
-        {
-            Debug.Log($"GENERATE MINI: heading={heading:F1}°, offset={offset:F1}°, useDistance={useDistance:F2} m (longTermDistance={longTermDistance:F2}), maxMini={maxMiniDistance}", this);
-            Debug.Log($"Mini explanation: This mini-step chooses heading {heading:F1}° which is {offset:F1}° offset from the long-term heading {longTermHeadingDegrees:F1}°. It travels {useDistance:F2} m to produce a short sway toward the long-term goal.", this);
-        }
-
         // Count this mini for long-term re-request policy.
         // Keep this increment local to GenerateMiniDecision so the policy logic stays simple.
         miniStepsSinceLongTerm++;
+
+        DiagnosticLog(
+            $"[WANDERER_DIAG][MINI_GENERATED] goal={longTermHeadingDegrees:F1} randomOffset={offset:F1} resultingHeading={heading:F1} quantizedCompass={WandererDirectionExtensions.ClosestToVector(HeadingVector(heading))} goalDistance={longTermDistance:F1} requestedMini={useDistance:F1} configuredMiniDistance={miniDistance:F1} miniCap={maxMiniDistance:F1} miniIndex={miniStepsSinceLongTerm} maxMiniSteps={maxMiniSteps} speed={miniSpeed:F1} acceleration={miniAcceleration:F1} stopping={miniStoppingDistance:F2} position={motor.Agent.nextPosition}",
+            this
+        );
 
         return new WandererDecision
         {
@@ -599,6 +934,45 @@ public class WandererController : MonoBehaviour
         };
     }
 
+    private bool TryStartPendingMini(bool replaceActiveMovement)
+    {
+        if (!hasFallbackLongTermGoal || motor == null || motor.Agent == null)
+        {
+            return false;
+        }
+
+        float offset = Random.Range(-maxAngleDeviation, maxAngleDeviation);
+        float heading = Mathf.Repeat(fallbackLongTermHeadingDegrees + offset, 360f);
+        float distance = fallbackLongTermDistance > 0f
+            ? fallbackLongTermDistance / 5f
+            : miniDistance;
+        distance = Mathf.Clamp(distance, Mathf.Max(0.01f, miniDistance), maxMiniDistance);
+        var mini = new WandererDecision
+        {
+            headingDegrees = heading,
+            distance = distance,
+            speed = Mathf.Max(miniSpeed, motor.Agent.speed),
+            acceleration = Mathf.Max(miniAcceleration, motor.Agent.acceleration),
+            angularSpeed = Mathf.Max(miniAngularSpeed, motor.Agent.angularSpeed),
+            stoppingDistance = 0f,
+            waitSeconds = 0f,
+            mood = string.Empty,
+            thought = string.Empty
+        };
+
+        bool started = motor.TryMove(mini, replaceActiveMovement) ||
+            motor.TryMoveAnywhere(mini, replaceActiveMovement);
+        Debug.Log(
+            $"[Wanderer] MINI while goal request is pending: started={started} replace={replaceActiveMovement} heading={heading:F1} goal={fallbackLongTermHeadingDegrees:F1} distance={distance:F1} busy={motor.IsBusy} position={motor.Agent.nextPosition}",
+            this
+        );
+        if (started)
+        {
+            lastDecision = mini;
+        }
+        return started;
+    }
+
     private void StartLocalRetryLoop()
     {
         if (localRetryRoutine != null)
@@ -612,6 +986,122 @@ public class WandererController : MonoBehaviour
             );
     }
 
+    private void BeginOscillationRecovery(Vector3 position, Vector3 lastDisplacement)
+    {
+        Vector3 travelAxis = lastDisplacement;
+        travelAxis.y = 0f;
+        if (travelAxis.sqrMagnitude < 0.001f)
+        {
+            travelAxis = motor.Agent.velocity;
+            travelAxis.y = 0f;
+        }
+        if (travelAxis.sqrMagnitude < 0.001f)
+        {
+            travelAxis = transform.forward;
+            travelAxis.y = 0f;
+        }
+        travelAxis.Normalize();
+
+        Vector3 escapeDirection = Vector3.Cross(Vector3.up, travelAxis).normalized;
+        if ((oscillationEscapeSide++ & 1) != 0)
+        {
+            escapeDirection = -escapeDirection;
+        }
+
+        Debug.LogWarning(
+            $"[Wanderer] Repeated reversals detected at {position:F1}; taking a {oscillationEscapeDistance:F0} m recovery route.",
+            this
+        );
+
+        if (localRetryRoutine != null)
+        {
+            StopCoroutine(localRetryRoutine);
+            localRetryRoutine = null;
+        }
+        CancelBrainRequest();
+        hasLongTermGoal = false;
+        hasFallbackLongTermGoal = false;
+        fallbackLongTermDistance = 0f;
+        longTermHeadingDegrees = 0f;
+        longTermDistance = 0f;
+        longTermMood = "curious";
+        accumulatedForwardProgress = 0f;
+        miniStepsSinceLongTerm = 0;
+        longTermStartTime = 0f;
+        hasLongTermProgressPosition = false;
+        longTermOriginPosition = position;
+        pendingDecision = null;
+        lastDecision = null;
+        brain.ClearMovementMemory();
+        ClearArrivalHistory(position);
+        consecutiveReversals = 0;
+        oscillationEscapeActive = true;
+
+        WandererDecision escapeDecision = new WandererDecision
+        {
+            headingDegrees = Mathf.Repeat(
+                Mathf.Atan2(escapeDirection.x, escapeDirection.z) * Mathf.Rad2Deg,
+                360f
+            ),
+            distance = oscillationEscapeDistance,
+            speed = Mathf.Max(miniSpeed, motor.Agent.speed),
+            acceleration = Mathf.Max(miniAcceleration, motor.Agent.acceleration),
+            angularSpeed = Mathf.Max(miniAngularSpeed, motor.Agent.angularSpeed),
+            stoppingDistance = 0f,
+            waitSeconds = 0f,
+            mood = string.Empty,
+            thought = string.Empty
+        };
+
+        bool escapeStarted = motor.TryMoveOscillationEscape(
+            escapeDirection,
+            oscillationEscapeDistance,
+            escapeDecision
+        );
+
+        if (!escapeStarted)
+        {
+            Debug.LogWarning(
+                "[WANDERER][OSCILLATION_ESCAPE_FALLBACK] No straight lateral NavMesh route was available; trying the best reachable forward route.",
+                this
+            );
+            escapeStarted = motor.TryMoveContinuously(escapeDecision) ||
+                motor.TryMoveAnywhere(escapeDecision);
+        }
+
+        if (!escapeStarted)
+        {
+            StartLocalRetryLoop();
+        }
+
+        StartLongTermGoal(keepCurrentRoute: true);
+    }
+
+    private void ClearArrivalHistory(Vector3 currentPosition)
+    {
+        arrivalHistoryCount = 0;
+        arrivalHistoryNext = 0;
+        lastArrivalPosition = currentPosition;
+        hasLastArrivalPosition = false;
+        lastArrivalDisplacement = Vector3.zero;
+        RecordArrival(currentPosition);
+    }
+
+    private void StartBrainRequest(IEnumerator request)
+    {
+        activeBrainRequestRoutine = StartCoroutine(request);
+    }
+
+    private void CancelBrainRequest()
+    {
+        if (activeBrainRequestRoutine != null)
+        {
+            StopCoroutine(activeBrainRequestRoutine);
+            activeBrainRequestRoutine = null;
+        }
+        decisionInProgress = false;
+    }
+
     private IEnumerator RetryMovementUntilItStarts()
     {
         while (enabled &&
@@ -621,7 +1111,16 @@ public class WandererController : MonoBehaviour
                 localRetryDelay
             );
 
-            if (motor.TryMoveAnywhere(lastDecision))
+            bool started = decisionInProgress
+                ? motor.TryMoveContinuously(lastDecision)
+                : motor.TryMove(lastDecision) || motor.TryMoveAnywhere(lastDecision);
+
+            if (!started && decisionInProgress)
+            {
+                started = motor.TryMoveAnywhere(lastDecision);
+            }
+
+            if (started)
             {
                 localRetryRoutine = null;
                 yield break;
@@ -635,6 +1134,43 @@ public class WandererController : MonoBehaviour
         }
 
         localRetryRoutine = null;
+    }
+
+    private int RecordArrival(Vector3 position)
+    {
+        int revisits = 0;
+        for (int i = 0; i < arrivalHistoryCount; i++)
+        {
+            if (Vector3.Distance(position, recentArrivalPositions[i]) <= 10f)
+            {
+                revisits++;
+            }
+        }
+
+        recentArrivalPositions[arrivalHistoryNext] = position;
+        arrivalHistoryNext = (arrivalHistoryNext + 1) % recentArrivalPositions.Length;
+        arrivalHistoryCount = Mathf.Min(arrivalHistoryCount + 1, recentArrivalPositions.Length);
+        return revisits;
+    }
+
+    private string FormatRecentArrivalPositions()
+    {
+        System.Text.StringBuilder builder = new System.Text.StringBuilder();
+        int oldest = arrivalHistoryCount == recentArrivalPositions.Length
+            ? arrivalHistoryNext
+            : 0;
+        for (int i = 0; i < arrivalHistoryCount; i++)
+        {
+            if (i > 0) builder.Append(" -> ");
+            builder.Append(recentArrivalPositions[(oldest + i) % recentArrivalPositions.Length].ToString("F0"));
+        }
+        return builder.ToString();
+    }
+
+    private static Vector3 HeadingVector(float headingDegrees)
+    {
+        float radians = headingDegrees * Mathf.Deg2Rad;
+        return new Vector3(Mathf.Sin(radians), 0f, Mathf.Cos(radians));
     }
 
     private void DisplayExpression(WandererDecision decision)
@@ -691,5 +1227,13 @@ public class WandererController : MonoBehaviour
             thought =
                 "The world has gone quiet, but I still feel like moving."
         };
+    }
+
+    private void DiagnosticLog(object message, UnityEngine.Object context = null)
+    {
+        if (showDetailedDiagnostics)
+        {
+            Debug.Log(message, context != null ? context : this);
+        }
     }
 }

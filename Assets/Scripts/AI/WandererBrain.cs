@@ -19,6 +19,9 @@ using UnityEngine.Networking;
 /// </summary>
 public class WandererBrain : MonoBehaviour
 {
+    [SerializeField, Tooltip("Enable detailed navigation diagnostics in the Console.")]
+    private bool showDetailedDiagnostics;
+
     private const string Endpoint =
         "https://api.openai.com/v1/responses";
 
@@ -39,6 +42,10 @@ public class WandererBrain : MonoBehaviour
     [SerializeField]
     [Tooltip("Print the raw API response for debugging.")]
     private bool printRawResponse = false;
+
+    [SerializeField, Min(1)]
+    [Tooltip("Maximum time in seconds to wait for one decision response before reporting a request failure.")]
+    private int decisionRequestTimeoutSeconds = 10;
 
 
     [Header("Decision Envelope")]
@@ -107,6 +114,9 @@ public class WandererBrain : MonoBehaviour
     private readonly Queue<string> recentExperiences =
         new Queue<string>();
 
+    private int diagnosticRequestSequence;
+    private bool diagnosticPersonalityPromptLogged;
+
 
  
 
@@ -117,8 +127,11 @@ public class WandererBrain : MonoBehaviour
     public IEnumerator RequestDecision(
         WandererPerceptionSnapshot perception,
         Action<WandererDecision> onSuccess,
-        Action<string> onFailure)
+        Action<string> onFailure,
+        int controllerRequestId = 0)
     {
+        int diagnosticRequestId = ++diagnosticRequestSequence;
+        float diagnosticStartedAt = Time.time;
         string apiKey = ResolveApiKey();
 
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -132,6 +145,15 @@ public class WandererBrain : MonoBehaviour
         }
 
         JObject requestBody = BuildRequest(perception);
+        string userPrompt = BuildPerceptionPrompt(perception);
+        string developerPrompt = diagnosticPersonalityPromptLogged
+            ? "<already logged on first request>"
+            : personalityPrompt;
+        diagnosticPersonalityPromptLogged = true;
+        DiagnosticLog(
+            $"[WANDERER_DIAG][BRAIN_REQUEST] brainRequestId={diagnosticRequestId} controllerRequestId={controllerRequestId} model={model} memories={recentExperiences.Count}/{rememberedMovements} distanceRange={minimumRequestedDistance:F0}-{maximumRequestedDistance:F0} speedRange={minimumSpeed:F0}-{maximumSpeed:F0} accelRange={minimumAcceleration:F0}-{maximumAcceleration:F0}\nDEVELOPER PROMPT:\n{developerPrompt}\nUSER PROMPT:\n{userPrompt}",
+            this
+        );
         string requestJson =
             requestBody.ToString(Formatting.None);
 
@@ -149,6 +171,8 @@ public class WandererBrain : MonoBehaviour
             request.downloadHandler =
                 new DownloadHandlerBuffer();
 
+            request.timeout = Mathf.Max(1, decisionRequestTimeoutSeconds);
+
             request.SetRequestHeader(
                 "Content-Type",
                 "application/json"
@@ -165,8 +189,7 @@ public class WandererBrain : MonoBehaviour
                 UnityWebRequest.Result.Success)
             {
                 onFailure?.Invoke(
-                    $"OpenAI request failed. HTTP {request.responseCode}: " +
-                    $"{request.error}\n{request.downloadHandler.text}"
+                    $"OpenAI request failed. HTTP {request.responseCode}: {request.error}"
                 );
 
                 yield break;
@@ -209,6 +232,10 @@ public class WandererBrain : MonoBehaviour
 
                 ClampDecision(decision);
                 ValidateDecisionStructure(decision);
+                DiagnosticLog(
+                    $"[WANDERER_DIAG][BRAIN_DECISION] brainRequestId={diagnosticRequestId} controllerRequestId={controllerRequestId} elapsed={Time.time - diagnosticStartedAt:F2} direction={decision.direction} heading={decision.headingDegrees:F1} distance={decision.distance:F1} speed={decision.speed:F1} acceleration={decision.acceleration:F1} angular={decision.angularSpeed:F1} stopping={decision.stoppingDistance:F2} wait={decision.waitSeconds:F2} mood={decision.mood} thought=\"{decision.thought}\"",
+                    this
+                );
                 onSuccess?.Invoke(decision);
             }
             catch (Exception exception)
@@ -247,6 +274,12 @@ public class WandererBrain : MonoBehaviour
         {
             recentExperiences.Dequeue();
         }
+    }
+
+    public void ClearMovementMemory()
+    {
+        recentExperiences.Clear();
+        DiagnosticLog("[WANDERER][BRAIN_MEMORY_RESET] Cleared recent movement experiences after oscillation recovery.", this);
     }
 
     private JObject BuildRequest(
@@ -679,5 +712,13 @@ public class WandererBrain : MonoBehaviour
         }
 
         return apiKey?.Trim();
+    }
+
+    private void DiagnosticLog(object message, UnityEngine.Object context = null)
+    {
+        if (showDetailedDiagnostics)
+        {
+            Debug.Log(message, context != null ? context : this);
+        }
     }
 }
