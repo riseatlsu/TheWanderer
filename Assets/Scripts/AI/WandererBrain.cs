@@ -60,19 +60,19 @@ public class WandererBrain : MonoBehaviour
     private float minimumSpeed = 15f;
 
     [SerializeField, Min(0.1f)]
-    private float maximumSpeed = 300f;
+    private float maximumSpeed = 25f;
 
     [SerializeField, Min(0.1f)]
-    private float minimumAcceleration = 10f;
+    private float minimumAcceleration = 30f;
 
     [SerializeField, Min(0.1f)]
-    private float maximumAcceleration = 600f;
+    private float maximumAcceleration = 60f;
 
     [SerializeField, Min(1f)]
     private float minimumAngularSpeed = 60f;
 
     [SerializeField, Min(1f)]
-    private float maximumAngularSpeed = 500f;
+    private float maximumAngularSpeed = 360f;
 
     [SerializeField, Min(0f)]
     private float minimumStoppingDistance = 0.5f;

@@ -163,22 +163,22 @@ public class WandererMotor : MonoBehaviour
     private float minimumSpeed = 1f;
 
     [SerializeField, Min(0.1f)]
-    private float maximumSpeed = 500f;
+    private float maximumSpeed = 25f;
 
     [SerializeField, Min(0.1f)]
     private float minimumAcceleration = 1f;
 
     [SerializeField, Min(0.1f)]
-    private float maximumAcceleration = 1000f;
+    private float maximumAcceleration = 60f;
 
     [SerializeField, Min(1f)]
     private float minimumAngularSpeed = 30f;
 
     [SerializeField, Min(1f)]
-    private float maximumAngularSpeed = 720f;
+    private float maximumAngularSpeed = 360f;
 
     [SerializeField, Min(0f)]
-    private float maximumStoppingDistance = 50f;
+    private float maximumStoppingDistance = 2f;
 
 
     [Header("Recovery")]
@@ -1772,7 +1772,7 @@ public class WandererMotor : MonoBehaviour
             this
         );
 
-        Debug.Log($"[Wanderer] MOVING toward {candidate.position:F1} ({candidate.actualDistance:F0} m; {candidate.fallbackStage}).", this);
+        Debug.Log($"[Wanderer] MOVING toward {candidate.position:F1} ({candidate.actualDistance:F0} m at {agent.speed:F0} m/s; {candidate.fallbackStage}).", this);
 
         IsBusy = true;
 
@@ -2081,7 +2081,7 @@ public class WandererMotor : MonoBehaviour
             this
         );
 
-        Debug.Log($"[Wanderer] ARRIVED at {agent.nextPosition:F1} after {result.actualDistance:F0} m.", this);
+        Debug.Log($"[Wanderer] ARRIVED at {agent.nextPosition:F1} after {result.actualDistance:F0} m in {Time.time - lastDestinationSetTime:F1} s.", this);
         MovementCompleted?.Invoke(result);
     }
 

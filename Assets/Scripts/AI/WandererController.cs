@@ -52,6 +52,7 @@ public class WandererController : MonoBehaviour
     private Coroutine localRetryRoutine;
     private Coroutine longTermRetryRoutine;
     private Coroutine activeBrainRequestRoutine;
+    private int consecutiveLongTermFailures;
     private WandererDecision lastDecision;
     private int consecutiveReversals;
     private bool oscillationEscapeActive;
@@ -433,6 +434,7 @@ public class WandererController : MonoBehaviour
     {
         activeBrainRequestRoutine = null;
         decisionInProgress = false;
+        consecutiveLongTermFailures++;
         Debug.LogWarning(
             $"[Wanderer] Long-term goal request failed; continuing toward {(hasFallbackLongTermGoal ? $"the previous heading {fallbackLongTermHeadingDegrees:F0}°" : "a local fallback")}. {error}",
             this
@@ -463,13 +465,17 @@ public class WandererController : MonoBehaviour
 
     private IEnumerator RetryLongTermGoalAfterFailure()
     {
-        yield return new WaitForSecondsRealtime(longTermDecisionRetryDelay);
+        float retryDelay = Mathf.Min(
+            longTermDecisionRetryDelay * Mathf.Pow(2f, Mathf.Min(consecutiveLongTermFailures - 1, 8)),
+            30f
+        );
+        yield return new WaitForSecondsRealtime(retryDelay);
         longTermRetryRoutine = null;
 
         if (enabled && enableLongTermGoals && !decisionInProgress)
         {
             Debug.Log(
-                "[Wanderer] Requesting a new long-term goal after the previous request failed.",
+                $"[Wanderer] Retrying long-term goal request after {retryDelay:F0} seconds.",
                 this
             );
             StartLongTermGoal(keepCurrentRoute: motor.IsBusy);
@@ -603,6 +609,18 @@ public class WandererController : MonoBehaviour
             return;
         }
 
+        // A request can fail before the first long-term goal is ever accepted.
+        // Keep extending the current heading during retry backoff instead of
+        // starting a random, full-size fallback route at every arrival.
+        if (enableLongTermGoals && !hasFallbackLongTermGoal)
+        {
+            if (!motor.TryMoveContinuously(lastDecision))
+            {
+                StartLocalRetryLoop();
+            }
+            return;
+        }
+
         if (!motor.TryMove(lastDecision) && !motor.TryMoveAnywhere(lastDecision))
         {
             StartLocalRetryLoop();
@@ -614,9 +632,24 @@ public class WandererController : MonoBehaviour
             $"[WANDERER_DIAG][NEXT_DECISION_EVENT] enabled={enabled} requestInProgress={decisionInProgress} busy={motor.IsBusy} goalActive={hasLongTermGoal} pending={(pendingDecision != null)} requestId={activeLongTermRequestId} position={motor.Agent.nextPosition} destination={motor.Agent.destination} remaining={(motor.Agent.hasPath ? motor.Agent.remainingDistance : -1f):F1} velocity={motor.Agent.velocity}",
             this
         );
-        if (!enabled ||
-            decisionInProgress ||
-            pendingDecision != null)
+        if (!enabled)
+        {
+            return;
+        }
+
+        if (decisionInProgress)
+        {
+            // The active request may be delayed or rate-limited. Extend the route
+            // now, before the current destination is reached, so movement doesn't
+            // depend on the request finishing first.
+            if (pendingDecision == null && !oscillationEscapeActive)
+            {
+                ContinueMovementWhileWaiting();
+            }
+            return;
+        }
+
+        if (pendingDecision != null)
         {
             return;
         }
@@ -821,6 +854,7 @@ public class WandererController : MonoBehaviour
     private void OnLongTermDecision(WandererDecision decision)
     {
         activeBrainRequestRoutine = null;
+        consecutiveLongTermFailures = 0;
         float priorHeading = longTermHeadingDegrees;
         DiagnosticLog(
             $"[WANDERER_DIAG][GOAL_RESPONSE] requestId={activeLongTermRequestId} elapsed={Time.time - activeLongTermRequestStartedAt:F2} rawHeading={(decision != null ? decision.headingDegrees.ToString("F1") : "null")} rawDirection={decision?.direction} distance={(decision != null ? decision.distance.ToString("F1") : "null")} busy={motor.IsBusy} pendingDecision={(pendingDecision != null)} position={motor.Agent.nextPosition} target={motor.Agent.destination} velocity={motor.Agent.velocity} recentArrivals={FormatRecentArrivalPositions()}",

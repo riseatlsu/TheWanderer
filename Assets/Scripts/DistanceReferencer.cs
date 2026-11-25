@@ -2,6 +2,7 @@
 
 
 using UnityEngine;
+using UnityEngine.AI;
 
 public class DistanceReferencer : MonoBehaviour
 {
@@ -10,12 +11,23 @@ public class DistanceReferencer : MonoBehaviour
 
     [Header("Point B")]
     [SerializeField] private GameObject mars;
-    //[SerializeField] private LayerMask marsLayer;
 
     private float playerHeight;
     private float targetHeight;
 
     private float distanceToGround;
+    private MeshCollider[] terrainColliders;
+    private bool hasGroundHeight;
+
+    private void Awake()
+    {
+        if (mars != null)
+        {
+            // The Surface object also has a large bounds BoxCollider. Only the
+            // actual terrain mesh represents ground for height sampling.
+            terrainColliders = mars.GetComponents<MeshCollider>();
+        }
+    }
 
     void Update()
     {
@@ -27,7 +39,18 @@ public class DistanceReferencer : MonoBehaviour
     private void UpdateDistanceData()
     {
         playerHeight = player.position.y;
-        targetHeight = GetTerrainHeightAt(player.position) + player.lossyScale.y / 2f;
+
+        if (TryGetTerrainHeightAt(player.position, out float terrainHeight))
+        {
+            targetHeight = terrainHeight + player.lossyScale.y / 2f;
+            hasGroundHeight = true;
+        }
+        else if (!hasGroundHeight)
+        {
+            // Keep the initial value finite until the first terrain sample.
+            targetHeight = playerHeight;
+        }
+
         distanceToGround = playerHeight - targetHeight;
     }
 
@@ -46,23 +69,67 @@ public class DistanceReferencer : MonoBehaviour
         return targetHeight;
     }
 
+    public float GetPlayerSpeed()
+    {
+        if (player == null)
+        {
+            return 0f;
+        }
+
+        NavMeshAgent agent = player.GetComponent<NavMeshAgent>();
+        return agent != null && agent.enabled && agent.isOnNavMesh
+            ? agent.velocity.magnitude
+            : 0f;
+    }
+
     public float GetTerrainHeightAt(Vector3 worldPosition)
     {
+        return TryGetTerrainHeightAt(worldPosition, out float height)
+            ? height
+            : worldPosition.y;
+    }
 
-        float maxDistance = 1000f;
-        Vector3 rayOrigin = new Vector3(worldPosition.x, worldPosition.y, worldPosition.z);
+    public bool TryGetTerrainHeightAt(Vector3 worldPosition, out float height)
+    {
+        height = 0f;
 
-        if (Physics.Raycast(rayOrigin + Vector3.down * 100, Vector3.up, out RaycastHit hit2, maxDistance))
+        if (terrainColliders == null || terrainColliders.Length == 0)
         {
-            return hit2.point.y;
-        }
-        else if (Physics.Raycast(rayOrigin + Vector3.up * 100, Vector3.down, out RaycastHit hit, maxDistance))
-        {
-            return hit.point.y;
+            return false;
         }
 
-        Debug.Log("Nothing hit.");
-        return worldPosition.y;
+        RaycastHit closestHit = default;
+        bool foundHit = false;
+        float closestDistance = float.PositiveInfinity;
+
+        foreach (MeshCollider terrainCollider in terrainColliders)
+        {
+            if (terrainCollider == null || !terrainCollider.enabled || !terrainCollider.gameObject.activeInHierarchy)
+            {
+                continue;
+            }
+
+            Bounds bounds = terrainCollider.bounds;
+            float margin = Mathf.Max(1f, bounds.size.y * 0.01f);
+            Vector3 origin = new Vector3(worldPosition.x, bounds.max.y + margin, worldPosition.z);
+            float rayDistance = bounds.size.y + margin * 2f;
+
+            if (terrainCollider.Raycast(new Ray(origin, Vector3.down), out RaycastHit hit, rayDistance) &&
+                hit.distance < closestDistance)
+            {
+                closestHit = hit;
+                closestDistance = hit.distance;
+                foundHit = true;
+            }
+        }
+
+        if (!foundHit)
+        {
+            return false;
+        }
+
+        height = closestHit.point.y;
+        return true;
     }
 
     public float GetHorizontalDistance(Vector3 a, Vector3 b)
