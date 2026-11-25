@@ -308,10 +308,10 @@ MonoBehaviour:
   angleChange: 5
   overlap: 1
   totalPoints: 20
+  colorTransitionSegments: 20
   enterSegments: 20
   returnSegments: 20
-  upTime: 1
-  downTime: 3
+  branchCooldown: 3
   lineMaterial: {fileID: 2100000, guid: 6ed38fbecb6e73548baf4cb6b548d2b4, type: 2}
   ditherValueMax: 2
   ditherValueMin: 1.1
@@ -1247,11 +1247,11 @@ NavMeshAgent:
   m_Enabled: 1
   m_AgentTypeID: 0
   m_Radius: 0.5
-  m_Speed: 500
-  m_Acceleration: 500
+  m_Speed: 20
+  m_Acceleration: 50
   avoidancePriority: 50
-  m_AngularSpeed: 500
-  m_StoppingDistance: 50
+  m_AngularSpeed: 180
+  m_StoppingDistance: 0
   m_AutoTraverseOffMeshLink: 1
   m_AutoBraking: 0
   m_AutoRepath: 1
@@ -1277,10 +1277,10 @@ MonoBehaviour:
   enableLongTermGoals: 1
   miniDistance: 5
   maxAngleDeviation: 20
-  miniSpeed: 100
-  miniAcceleration: 1000
+  miniSpeed: 20
+  miniAcceleration: 50
   miniAngularSpeed: 180
-  miniStoppingDistance: 0.05
+  miniStoppingDistance: 0
   longTermGoalRadius: 10000
   maxMiniDistance: 200
   reRequestDistanceFraction: 1
@@ -1312,12 +1312,12 @@ MonoBehaviour:
   turnSamples: 12
   turnAngleThresholdDegrees: 20
   minimumSpeed: 1
-  maximumSpeed: 500
+  maximumSpeed: 25
   minimumAcceleration: 1
-  maximumAcceleration: 1000
+  maximumAcceleration: 60
   minimumAngularSpeed: 30
-  maximumAngularSpeed: 720
-  maximumStoppingDistance: 50
+  maximumAngularSpeed: 360
+  maximumStoppingDistance: 2
   stallTimeout: 4
   stallPositionEpsilon: 0.1
   minimumMovementTimeout: 20
@@ -1343,15 +1343,15 @@ MonoBehaviour:
   printRawResponse: 0
   minimumRequestedDistance: 5000
   maximumRequestedDistance: 10000
-  minimumSpeed: 350
-  maximumSpeed: 500
-  minimumAcceleration: 350
-  maximumAcceleration: 500
-  minimumAngularSpeed: 350
-  maximumAngularSpeed: 500
-  minimumStoppingDistance: 1
-  maximumStoppingDistance: 2
-  maximumWaitSeconds: 1
+  minimumSpeed: 15
+  maximumSpeed: 25
+  minimumAcceleration: 30
+  maximumAcceleration: 60
+  minimumAngularSpeed: 60
+  maximumAngularSpeed: 240
+  minimumStoppingDistance: 0
+  maximumStoppingDistance: 1
+  maximumWaitSeconds: 0
   personalityPrompt: 'You are Wanderer, a small autonomous sphere experiencing the
     surface of Mars for the first time.
 
@@ -1525,7 +1525,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: '::'
   dReference: {fileID: 1000221517}
-  mReference: {fileID: 869197558}
   widthMin: 50
   widthMax: 100
   widthUpdate: 0.01

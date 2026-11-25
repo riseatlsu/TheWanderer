@@ -308,10 +308,10 @@ MonoBehaviour:
   angleChange: 5
   overlap: 1
   totalPoints: 20
+  colorTransitionSegments: 20
   enterSegments: 20
   returnSegments: 20
-  upTime: 1
-  downTime: 3
+  branchCooldown: 3
   lineMaterial: {fileID: 2100000, guid: 6ed38fbecb6e73548baf4cb6b548d2b4, type: 2}
   ditherValueMax: 2
   ditherValueMin: 1.1
@@ -1586,7 +1586,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: '::'
   dReference: {fileID: 1000221517}
-  mReference: {fileID: 869197558}
   widthMin: 50
   widthMax: 100
   widthUpdate: 0.01

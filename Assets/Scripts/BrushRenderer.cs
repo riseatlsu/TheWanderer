@@ -19,11 +19,13 @@ public class BrushRenderer : MonoBehaviour
     [SerializeField] int overlap = 1;
     [SerializeField] int totalPoints = 6;
 
+    [Header("Color Transition")]
+    [SerializeField, Min(1)] private int colorTransitionSegments = 20;
+
     [Header("Branch Segment Settings")]
     [SerializeField] int enterSegments = 20;
     [SerializeField] int returnSegments = 20;
-    [SerializeField] float upTime = 3f;
-    [SerializeField] float downTime = 3f;
+    [SerializeField, Min(0f)] float branchCooldown = 3f;
 
     [Header("Material Settings")]
     [SerializeField] Material lineMaterial;
@@ -43,12 +45,12 @@ public class BrushRenderer : MonoBehaviour
     private Vector3 pastDirection;
 
     private float branchSide = 1f;
-
-    private bool isBranching;
     private float branchAmount = 0f;
-
-    private bool isSubBranching;
     private float subBranchAmount = 0f;
+    private bool branchCycleActive;
+    private int branchCycleProgress;
+    private float nextBranchTime;
+    private float accumulatedTurnAngle;
 
 
     private bool isRendering = false;
@@ -58,15 +60,15 @@ public class BrushRenderer : MonoBehaviour
 
     private float ditherValue = 2f;
 
-    private float downtime = 0f;
-    private float uptime = 0f;
-    private bool branchSideCalculated = false;
     private bool fadedIn = false;
 
     
-    private bool canChangeColor = false;
     private Color color;
     private Color colorRequest;
+    private bool hasPreviousColor;
+    private Color transitionStartColor;
+    private Color transitionTargetColor;
+    private int colorTransitionIndex;
 
 
     private void Start()
@@ -81,8 +83,10 @@ public class BrushRenderer : MonoBehaviour
 
         colorRequest = pReferencer.GetColor();
 
-        isBranching = false;
-        isSubBranching = false;
+        branchCycleActive = false;
+        branchCycleProgress = 0;
+        nextBranchTime = 0f;
+        accumulatedTurnAngle = 0f;
         isInitialized = false;
     }
     void Update()
@@ -104,53 +108,49 @@ public class BrushRenderer : MonoBehaviour
             prevEnd = pReferencer.GetBrushPosition();
             prevBranchEnd = prevEnd;
             prevSubBranchEnd = prevEnd;
-            canChangeColor = true;
+            pastDirection = Vector3.zero;
+            branchAmount = 0f;
+            subBranchAmount = 0f;
+            branchCycleProgress = 0;
+            branchCycleActive = false;
+            accumulatedTurnAngle = 0f;
             isInitialized = true;
             return;
         }
 
-        SetBranching();
-        SetSubBranching();
-
         if (WidthChanged() || IsDistant())
         {
-            MakeSegment();
+            Vector3 nextDirection = pReferencer.GetBrushPosition() - prevEnd;
+            bool branchStarted = TryStartBranch(nextDirection);
 
             float prevBranchAmount = branchAmount;
             float prevSubBranchAmount = subBranchAmount;
-            UpdateBranchAmount();
-            UpdateSubBranchAmount();
+
+            MakeSegment();
+
+            if (branchStarted || branchCycleActive)
+            {
+                UpdateBranchAmount();
+            }
 
             if (branchAmount > 0f || prevBranchAmount > 0f)
             {
-                if (!isSubBranching || !isBranching)
-                {
-                    MakeBranchSegment(1);
-                }
+                MakeBranchSegment(1);
             }
 
             if (subBranchAmount > 0f || prevSubBranchAmount > 0f)
             {
-                if (!isBranching)
-                {
-                    MakeBranchSegment(2);
-                }
+                MakeBranchSegment(2);
             }
 
-            if (branchAmount <= 0f)
+            if (!branchCycleActive && branchAmount <= 0f)
             {
-                if (!isBranching && !isSubBranching)
-                {
-                    prevBranchEnd = prevEnd;
-                }
+                prevBranchEnd = prevEnd;
             }
 
-            if (subBranchAmount <= 0f)
+            if (!branchCycleActive && subBranchAmount <= 0f)
             {
-                if (!isSubBranching && !isBranching)
-                {
-                    prevSubBranchEnd = prevEnd;
-                }
+                prevSubBranchEnd = prevEnd;
             }
         }
     }
@@ -221,41 +221,43 @@ public class BrushRenderer : MonoBehaviour
         return Mathf.Abs(previousWidth - currentWidth) > widthDistance;
     }
 
-    public bool AngleChanged(int i)
+    private bool TryStartBranch(Vector3 currentDirection)
     {
-        if (Time.time < downtime)
+        currentDirection.y = 0f;
+        Vector3 previousDirection = pastDirection;
+        previousDirection.y = 0f;
+
+        if (segments.Count == 0 ||
+            currentDirection.sqrMagnitude < 0.0001f ||
+            previousDirection.sqrMagnitude < 0.0001f)
         {
             return false;
         }
 
-        uptime = downtime + (upTime * i);
-
-        if (!branchSideCalculated)
+        if (branchCycleActive || Time.time < nextBranchTime)
         {
-            branchSide = GetBranchSide();
-            branchSideCalculated = true;
-        }
-
-        if (Time.time > uptime)
-        {
-            downtime = Time.time + downTime;
-            branchSideCalculated = false;
+            accumulatedTurnAngle = 0f;
             return false;
         }
 
-        Vector3 currentDirection = pReferencer.GetBrushPosition() - prevEnd;
+        accumulatedTurnAngle += Vector3.SignedAngle(
+            previousDirection.normalized,
+            currentDirection.normalized,
+            Vector3.up);
 
-        float angleDifference = Vector3.Angle(pastDirection, currentDirection);
-
-        if (angleDifference > angleChange / i)
-        {
-            return true;
-        }
-        else
+        if (Mathf.Abs(accumulatedTurnAngle) < angleChange)
         {
             return false;
         }
 
+        branchSide = Mathf.Sign(accumulatedTurnAngle);
+        accumulatedTurnAngle = 0f;
+        branchAmount = 0f;
+        subBranchAmount = 0f;
+        branchCycleProgress = 0;
+        branchCycleActive = true;
+        nextBranchTime = Time.time + branchCooldown;
+        return true;
     }
 
     public void MakeSegment()
@@ -309,107 +311,98 @@ public class BrushRenderer : MonoBehaviour
     {
         Material newMaterial = new Material(lineMaterial);
 
-        if (Keyboard.current.kKey.isPressed)                        // get more transparent
+        if (Keyboard.current.kKey.isPressed)
         {
             ditherValue += ditherUpdate;
         }
-        else if (Keyboard.current.lKey.isPressed)                   // get more opaque
+        else if (Keyboard.current.lKey.isPressed)
         {
             fadedIn = true;
-            ditherValue -= ditherUpdate;
-
-            if (ditherValue < ditherValueMin)
-            {
-                ditherValue = ditherValueMin;
-            }
+            ditherValue = Mathf.Max(ditherValueMin, ditherValue - ditherUpdate);
         }
 
         newMaterial.SetFloat("_DitherValue", ditherValue);
         seg.material = newMaterial;
 
-        /*
-        if (segments.Count > 0)
+        Color requestedColor = colorRequest;
+        requestedColor.a = 1f;
+        int transitionLength = Mathf.Max(1, colorTransitionSegments);
+
+        if (!hasPreviousColor)
         {
-            seg.startColor = segments[segments.Count - 1].endColor;
-            seg.endColor = pReferencer.GetColor();
+            color = requestedColor;
+            transitionStartColor = requestedColor;
+            transitionTargetColor = requestedColor;
+            colorTransitionIndex = transitionLength;
+            hasPreviousColor = true;
+        }
+        else if (requestedColor != transitionTargetColor)
+        {
+            transitionStartColor = color;
+            transitionTargetColor = requestedColor;
+            colorTransitionIndex = 0;
+        }
+
+        if (colorTransitionIndex < transitionLength)
+        {
+            float startProgress = colorTransitionIndex / (float)transitionLength;
+            float endProgress = (colorTransitionIndex + 1f) / transitionLength;
+            seg.startColor = Color.Lerp(transitionStartColor, transitionTargetColor, startProgress);
+            seg.endColor = Color.Lerp(transitionStartColor, transitionTargetColor, endProgress);
+            color = seg.endColor;
+            colorTransitionIndex++;
         }
         else
         {
-            seg.startColor = pReferencer.GetColor();
-            seg.endColor = pReferencer.GetColor();
+            color = transitionTargetColor;
+            seg.startColor = color;
+            seg.endColor = color;
         }
-        */
-
-        if (canChangeColor)
-        {
-            color = colorRequest;
-            canChangeColor = false;
-        }
-
-        seg.startColor = color;
-        seg.endColor = color;
         
         
     }
 
 
 
-
-    public void SetBranching()
-    {
-        bool wantsBranching = AngleChanged(4) && !isSubBranching && pReferencer.GetPlayerSpeed() >= 1000f;
-
-        isBranching = wantsBranching;
-    }
-
-    public void SetSubBranching()
-    {
-        bool wantsSubBranching = AngleChanged(1) && !isBranching && pReferencer.GetPlayerSpeed() < 1000f;
-
-        isSubBranching = wantsSubBranching;
-    }
 
     public void SetColorRequest()
     {
         colorRequest = pReferencer.GetColor();
     }
 
-    public int GetBranchSide()
+    private void UpdateBranchAmount()
     {
-        Vector3 currentDirection =
-            pReferencer.GetBrushPosition() - prevEnd;
+        int growSegments = Mathf.Max(1, enterSegments);
+        int shrinkSegments = Mathf.Max(1, returnSegments);
+        branchCycleProgress++;
 
-        float cross =
-            pastDirection.x * currentDirection.y -
-            pastDirection.y * currentDirection.x;
-
-        if (cross < 0)
+        if (branchCycleProgress <= growSegments)
         {
-            return -1;
+            branchAmount = branchCycleProgress / (float)growSegments;
+        }
+        else if (branchCycleProgress <= growSegments + shrinkSegments)
+        {
+            int returnProgress = branchCycleProgress - growSegments;
+            branchAmount = 1f - returnProgress / (float)shrinkSegments;
+
+            if (branchCycleProgress >= growSegments + shrinkSegments)
+            {
+                branchCycleActive = false;
+            }
         }
         else
         {
-            return 1;
+            branchAmount = 0f;
+            branchCycleActive = false;
         }
-    }
 
+        subBranchAmount = branchAmount;
 
-    private void UpdateBranchAmount()
-    {
-        float targetAmount = isBranching || isSubBranching ? 1f : 0f;
-        int segmentCount = isBranching || isSubBranching ? enterSegments : returnSegments;
-        float step = 1f / Mathf.Max(1, segmentCount);
-
-        branchAmount = Mathf.MoveTowards(branchAmount, targetAmount, step);
-    }
-
-    private void UpdateSubBranchAmount()
-    {
-        float subTargetAmount = isSubBranching ? 1f : 0f;
-        int subSegmentCount = isSubBranching ? enterSegments : returnSegments;
-        float subStep = 1f / Mathf.Max(1, subSegmentCount);
-
-        subBranchAmount = Mathf.MoveTowards(subBranchAmount, subTargetAmount, subStep);
+        if (!branchCycleActive && branchCycleProgress >= growSegments + shrinkSegments)
+        {
+            branchAmount = 0f;
+            subBranchAmount = 0f;
+        }
     }
 
 

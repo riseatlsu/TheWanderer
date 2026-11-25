@@ -12,7 +12,6 @@ public class PhysicsReferencer : MonoBehaviour
 {
     [Header("Reference Data")]
     [SerializeField] private DistanceReferencer dReference;
-    [SerializeField] private PlayerMovement mReference;
 
     [Header("Width Settings")]
     [SerializeField] private float widthMin = 15f;
@@ -165,9 +164,10 @@ public class PhysicsReferencer : MonoBehaviour
             Vector3 branchTarget = mainPoint + sideDirection * newScaler * enterBranchedAmount * branchSide;
 
             Vector3 branchPoint = Vector3.Lerp(start, branchTarget, t);
-            if (branchPoint.y < dReference.GetTerrainHeightAt(branchPoint) + 0.1f)
+            if (dReference.TryGetTerrainHeightAt(branchPoint, out float terrainHeight) &&
+                branchPoint.y < terrainHeight + 0.1f)
             {
-                branchPoint.y = dReference.GetTerrainHeightAt(branchPoint) + 0.1f;
+                branchPoint.y = terrainHeight + 0.1f;
             }
 
             positions[i] = branchPoint;
@@ -188,6 +188,6 @@ public class PhysicsReferencer : MonoBehaviour
 
     public float GetPlayerSpeed()
     {
-        return mReference.GetCurrentSpeed();
+        return dReference != null ? dReference.GetPlayerSpeed() : 0f;
     }
 }
